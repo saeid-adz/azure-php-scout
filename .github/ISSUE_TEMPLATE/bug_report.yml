@@ -1,0 +1,19 @@
+name: Bug report
+description: Report a reproducible scanner or service issue using synthetic data.
+body:
+  - type: markdown
+    attributes:
+      value: Keep customer data and credentials out of this public issue. Report security vulnerabilities privately through the Security tab.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction with synthetic data
+      description: Include the app version, Python/OS version, command or UI steps, and sanitized errors.
+    validations:
+      required: true

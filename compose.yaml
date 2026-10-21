@@ -1,0 +1,19 @@
+services:
+  scout:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      SCOUT_API_TOKEN: ${SCOUT_API_TOKEN:?Set a random token of at least 32 characters in .env}
+      SCOUT_ALLOWED_HOSTS: ${SCOUT_ALLOWED_HOSTS:-localhost,127.0.0.1}
+    volumes:
+      - scout-data:/data
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  scout-data:

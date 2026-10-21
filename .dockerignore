@@ -1,0 +1,16 @@
+.git
+.venv
+.scout
+.env
+.azure
+**/__pycache__
+**/*.db
+**/*.key
+**/*.pem
+reports
+results
+web-scan.*
+azure-web-inventory.csv
+azure-inventory-coverage.json
+vms-public-ip.csv
+webapps-php.csv

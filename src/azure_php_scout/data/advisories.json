@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-10-21",
+  "scope": "Two PHP core advisories published on 2026-10-21; this is not an exhaustive vulnerability database.",
+  "announcement": "https://www.php.net/archive/2026.php#2026-10-21-5",
+  "advisories": [
+    {
+      "id": "CVE-2026-109618",
+      "title": "RCE via OOM corruption",
+      "severity": "critical",
+      "cvss": 9.2,
+      "published": "2026-10-21",
+      "url": "https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w",
+      "fixed": {"8.2": "8.2.35", "8.3": "8.3.36", "8.4": "8.4.27", "8.5": "8.5.12"}
+    },
+    {
+      "id": "CVE-2026-109619",
+      "title": "RCE via stale global state",
+      "severity": "critical",
+      "cvss": 9.2,
+      "published": "2026-10-21",
+      "url": "https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp",
+      "fixed": {"8.2": "8.2.35", "8.3": "8.3.36", "8.4": "8.4.27", "8.5": "8.5.12"}
+    }
+  ],
+  "lifecycle_source": "https://www.php.net/supported-versions.php",
+  "lifecycle": {
+    "8.2": {"active_until": "2024-12-31", "security_until": "2026-12-31"},
+    "8.3": {"active_until": "2025-12-31", "security_until": "2027-12-31"},
+    "8.4": {"active_until": "2026-12-31", "security_until": "2028-12-31"},
+    "8.5": {"active_until": "2027-12-31", "security_until": "2029-12-31"}
+  },
+  "legacy_eol_before": "8.2.0",
+  "legacy_source": "https://www.php.net/eol.php"
+}

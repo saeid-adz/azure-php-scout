@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Find Azure web services that may need a PHP security update.">
+  <title>Azure PHP Scout</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+<section class="login-screen" id="login-screen">
+  <form class="login-card" id="login-form">
+    <div class="brand"><span class="brand-icon">⌘</span><span>AZURE PHP <b>SCOUT</b></span></div>
+    <p class="eyebrow">COMMUNITY EDITION</p><h1>Find the services<br>that need attention.</h1>
+    <p class="muted">Sign in to your self-hosted scanner to discover Azure web applications and review PHP advisory impact.</p>
+    <label>Service token<input id="token" type="password" autocomplete="current-password" required placeholder="Paste your service token"></label>
+    <p class="hint">On the service host, run <code>azure-php-scout token</code>. Your token stays in this browser tab.</p>
+    <button class="button primary" type="submit">Open workspace <span>→</span></button>
+    <p class="form-error" id="login-error" role="alert"></p>
+    <div class="login-footer">Read-only Azure discovery · HTTP fingerprints · Source-linked findings</div>
+  </form>
+</section>
+<div class="app" id="app" hidden>
+ <aside class="sidebar">
+  <a class="brand" href="/"><span class="brand-icon">⌘</span><span>AZURE PHP<br><b>SCOUT</b></span></a>
+  <p class="nav-label">WORKSPACE</p>
+  <button class="nav-item active" id="nav-workspace"><span>▦</span> Exposure workspace</button>
+  <button class="nav-item" id="nav-advisories"><span>◇</span> Advisory catalog <span class="nav-count">2</span></button>
+  <a class="nav-item" href="https://github.com/saeid-adz/azure-php-scout#readme" target="_blank" rel="noopener noreferrer"><span>↗</span> Documentation</a>
+  <div class="sidebar-bottom"><span class="connection-dot"></span><span id="connection-label">Self-hosted service</span><small>Community edition · <span id="version">0.1.0</span></small><button class="text-button" id="sign-out">Sign out</button></div>
+ </aside>
+ <div class="workspace">
+  <header class="topbar"><span class="breadcrumb">Workspace <span>/</span> <strong>PHP exposure</strong></span><a class="github-link" href="https://github.com/saeid-adz/azure-php-scout" target="_blank" rel="noopener noreferrer">Open source on GitHub ↗</a></header>
+  <main>
+   <div class="page-heading"><div><p class="eyebrow">AZURE SECURITY DISCOVERY</p><h1>Exposure workspace</h1><p class="muted">Find the Azure services that need a PHP update.</p></div><div class="heading-actions"><button class="button secondary" id="load-demo">Explore demo</button><button class="button primary" id="new-scan">＋ New scan</button></div></div>
+   <div class="notice" id="catalog-notice"><span class="notice-icon">!</span><div><strong>PHP security advisory baseline</strong><p>Checking CVE-2026-109618 and CVE-2026-109619. Findings use version evidence and require package and backport verification.</p></div><button class="text-button" id="view-advisories">View advisories ↗</button></div>
+   <div class="demo-notice" id="demo-notice" hidden>Synthetic demo · example resources only · no network scan was run.</div>
+   <section class="stats" aria-label="Selected scan summary">
+    <article class="stat critical-stat"><span class="stat-label">Potentially affected <span class="stat-dot critical-dot"></span></span><strong id="stat-affected">0</strong><small>Version matches tracked advisories</small></article>
+    <article class="stat"><span class="stat-label">Upstream end of life <span class="stat-dot amber-dot"></span></span><strong id="stat-eol">0</strong><small>Upgrade or verify vendor support</small></article>
+    <article class="stat"><span class="stat-label">Version verification <span class="stat-dot blue-dot"></span></span><strong id="stat-verify">0</strong><small>Runtime or patch details needed</small></article>
+    <article class="stat"><span class="stat-label">HTTP endpoints <span class="stat-dot green-dot"></span></span><strong id="stat-http">0</strong><small id="stat-endpoints">0 endpoints checked</small></article>
+   </section>
+   <section class="run-panel" aria-label="Scan controls and coverage">
+    <div class="run-selector"><label for="scan-select">SCAN RUN</label><select id="scan-select"><option value="">Select a scan</option></select><span class="status-badge" id="scan-state">No scans yet</span><button class="button small danger" id="cancel-scan" hidden>Cancel scan</button><div class="run-spacer"></div><button class="button small secondary" id="refresh">↻ Refresh</button><button class="button small secondary" id="download-html" disabled>↓ HTML report</button><button class="button small secondary" id="download-csv" disabled>↓ CSV</button></div>
+    <div class="coverage-grid"><div><span>Inventory</span><strong id="coverage-resources">Start a scan to discover resources</strong></div><div><span>VM port scope</span><strong id="coverage-ports">—</strong></div><div><span>TCP discovery</span><strong id="coverage-tcp">—</strong></div><div><span>Advisories reviewed</span><strong id="coverage-date">21 Oct 2026</strong></div></div>
+    <div class="run-progress" id="run-progress" hidden><progress id="tcp-progress" max="100" value="0">0%</progress><span id="progress-text">Waiting for scan output…</span></div>
+    <div id="coverage-errors" class="coverage-errors" hidden></div>
+    <details class="run-notes"><summary>Coverage gaps &amp; scan log</summary><p class="muted" id="coverage-skipped">No run selected.</p><button class="text-button" id="load-logs">Show latest log</button><pre id="scan-log" hidden></pre></details>
+   </section>
+   <section class="findings-panel" aria-labelledby="findings-heading">
+    <div class="section-heading"><div><h2 id="findings-heading">Service findings <span id="finding-count" class="count-pill">0</span></h2><p class="muted">Prioritized by potential impact, with the evidence behind each result.</p></div><span class="fine-print">Version evidence ≠ confirmed exploitability</span></div>
+    <div class="filters"><label class="search-label"><span>⌕</span><input type="search" id="search" placeholder="Search service, customer, IP, version or CVE…" aria-label="Search findings"></label><select id="resource-filter" aria-label="Resource type"><option value="">All resource types</option><option value="vm">Virtual machines</option><option value="appservice">App Services</option><option value="staticwebapp">Static Web Apps</option><option value="target">Manual targets</option></select><select id="assessment-filter" aria-label="Assessment"><option value="">All assessments</option><option value="potentially_affected">Potentially affected</option><option value="end_of_life">Upstream end of life</option><option value="verify_version">Verify runtime version</option><option value="configuration_only">Configuration only</option><option value="no_catalog_match">Outside tracked ranges</option><option value="undetermined">Undetermined</option></select></div>
+    <div class="table-wrap"><table><thead><tr><th scope="col">Service / endpoint</th><th scope="col">Azure context</th><th scope="col">Runtime signals</th><th scope="col">Assessment</th><th scope="col"><span class="sr-only">Details</span></th></tr></thead><tbody id="findings-body"></tbody></table></div>
+    <div class="empty-state" id="empty-state"><span>⌕</span><h3>Your Azure exposure, in one place.</h3><p>Start a scan, import an inventory, or explore the synthetic demo.</p><button class="button secondary" id="empty-demo">Explore demo →</button></div>
+    <footer class="pagination"><span id="page-label">No findings to display</span><div><button id="previous" class="button small secondary" disabled>← Previous</button><button id="next" class="button small secondary" disabled>Next →</button></div></footer>
+   </section>
+   <footer class="page-footer"><span>Azure PHP Scout is a community discovery and triage tool. The bundled catalog tracks two PHP core CVEs.</span><span>Self-hosted · Your reports stay with your service.</span></footer>
+   <p id="workspace-error" class="form-error" role="alert"></p>
+  </main>
+ </div>
+</div>
+<dialog id="scan-dialog" class="dialog scan-dialog">
+ <form id="scan-form"><div class="dialog-heading"><div><p class="eyebrow">DISCOVERY</p><h2>Start a new scan</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close">×</button></div><p class="muted">Discover services, collect HTTP evidence, and assess reported PHP versions.</p>
+ <label>Run name<input name="name" value="Azure discovery" required maxlength="100"></label>
+ <label>Target source<select name="mode" id="source-mode"><option value="azure">Azure subscriptions</option><option value="targets">IP addresses / hostnames</option><option value="inventory">Inventory CSV</option></select></label>
+ <div id="azure-fields"><label>Subscription IDs <span class="optional">optional · one per line</span><textarea name="subscriptions" rows="2" placeholder="Leave empty for all enabled subscriptions visible to Azure CLI"></textarea></label><button type="button" class="text-button" id="list-subscriptions">Check available subscriptions</button><div id="subscription-list" class="subscription-list" hidden></div><p class="hint">The service uses its host’s Azure CLI session. Run <code>az login</code> there, or use a managed identity in Azure.</p></div>
+ <div id="target-fields" hidden><label>Targets <span class="optional">one per line</span><textarea name="targets" rows="4" placeholder="203.0.113.10&#10;www.example.com"></textarea></label></div>
+ <div id="inventory-fields" hidden><label>Inventory file<input id="inventory-file" type="file" accept=".csv,text/csv"></label><p class="hint">CSV needs a publicIp, ip, or hostname column. Optional VM/app and subscription fields preserve ownership context.</p></div>
+ <label>VM port discovery<select name="profile" id="port-profile"><option value="web">Common web ports (127 ports)</option><option value="all">Full TCP range (1–65535)</option><option value="custom">Custom ports / ranges</option></select></label>
+ <label id="custom-port-field" hidden>Custom VM ports<input name="custom_ports" placeholder="80,443,3000-3010,8000-9000"></label>
+ <p class="hint" id="port-hint">Open VM ports are checked for HTTP and HTTPS. App Services and Static Web Apps are checked by hostname on ports 80 and 443.</p>
+ <details class="advanced"><summary>Scan options</summary><div class="form-grid"><label>HTTP timeout (seconds)<input name="timeout" type="number" value="5" min="1" max="30"></label><label>HTTP workers<input name="workers" type="number" value="10" min="1" max="64"></label><label>TCP connections / second<input name="port_rate" type="number" value="500" min="1" max="5000"></label><label>TCP workers<input name="port_workers" type="number" value="256" min="1" max="1024"></label></div><label class="checkbox"><input name="running_only" type="checkbox">Include only running / ready resources</label><label class="checkbox"><input name="no_probes" type="checkbox">Homepage only (skip WordPress endpoint probes)</label><label class="checkbox"><input name="verify_tls" type="checkbox">Require trusted TLS certificates</label></details>
+ <p id="scan-form-error" class="form-error" role="alert"></p><div class="dialog-footer"><button type="button" class="button secondary close-dialog">Cancel</button><button type="submit" class="button primary" id="start-scan">Start discovery →</button></div></form>
+</dialog>
+<dialog id="detail-dialog" class="dialog detail-dialog"><div class="dialog-heading"><div><p class="eyebrow">SERVICE EVIDENCE</p><h2 id="detail-title">Service details</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close">×</button></div><div id="detail-content"></div></dialog>
+<dialog id="advisory-dialog" class="dialog detail-dialog"><div class="dialog-heading"><div><p class="eyebrow">SOURCE-LINKED RULES</p><h2>Advisory catalog</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close">×</button></div><div id="advisory-content"></div></dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

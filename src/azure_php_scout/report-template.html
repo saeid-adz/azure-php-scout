@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Azure PHP Scout · Exposure report</title>
+<style>
+:root{color-scheme:light;--ink:#172a30;--muted:#586b70;--paper:#f4f6f4;--line:#dce4e0;--teal:#08786d}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{background:#142f33;color:white;padding:28px max(24px,calc((100vw - 1440px)/2));border-bottom:4px solid #38c7a1}
+.topline,.heading,.section-heading{display:flex;justify-content:space-between;align-items:center;gap:20px}
+.brand{font-size:15px;font-weight:750;letter-spacing:.13em}.brand span{color:#64dfbb}.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.16em;color:#a5c3c4;margin:30px 0 8px}
+h1{font-size:clamp(28px,4vw,40px);letter-spacing:-.04em;line-height:1.12;margin:0 0 12px;font-weight:650}header p{color:#bbd1d1;margin:0;max-width:720px}
+.status{font-size:12px;border:1px solid #4f7375;border-radius:999px;padding:5px 12px;white-space:nowrap}.status::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#64dfbb;margin-right:7px}
+.status.interrupted::before,.status.failed::before{background:#ffd18c}.status.running::before{background:#9cdaf8}
+.print{color:white;background:transparent;border:1px solid #678588;padding:9px 16px;border-radius:7px;font:inherit;cursor:pointer;white-space:nowrap}
+main{max-width:1488px;margin:auto;padding:28px 24px 40px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.stat{background:white;border:1px solid var(--line);border-radius:12px;padding:20px 22px}.stat-label{font-size:12px;color:var(--muted)}.stat strong{display:block;font-size:34px;line-height:1.3;letter-spacing:-.04em;margin:8px 0}.stat small{color:var(--muted);font-size:12px}.stat.accent{border-top:3px solid var(--teal);padding-top:18px}
+.progress{margin-top:15px;display:flex;gap:12px;align-items:center;font-size:12px;color:var(--muted)}progress{height:7px;max-width:220px;accent-color:var(--teal)}
+.results{background:white;border:1px solid var(--line);border-radius:12px;margin-top:26px;overflow:hidden}.section-heading{padding:22px 24px 14px}h2{margin:0;font-size:19px;letter-spacing:-.02em}.count{color:var(--muted);font-size:12px}
+.filters{display:grid;grid-template-columns:2fr 1.25fr 1.1fr 1fr 1fr;gap:12px;padding:0 24px 20px}label{display:block;font-size:11px;color:var(--muted);font-weight:600}input,select{display:block;width:100%;font:inherit;font-weight:400;color:var(--ink);margin-top:5px;padding:10px 11px;border:1px solid #cdd9d4;background:#fbfcfb;border-radius:7px;min-height:43px}input:focus,select:focus,button:focus-visible,summary:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;text-align:left;min-width:900px}th{padding:13px 20px;font-size:10px;font-weight:700;color:var(--muted);background:#f8faf8;border-top:1px solid var(--line);border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.08em}td{padding:18px 20px;border-bottom:1px solid #e8eeea;vertical-align:top;font-size:12px}tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:#fcfdfb}td strong{font-weight:650}td small{display:block;color:var(--muted);font-size:11px;margin-top:4px;overflow-wrap:anywhere}.endpoint{max-width:300px;overflow-wrap:anywhere}a{color:var(--teal);text-decoration:none;font-weight:600}a:hover{text-decoration:underline}.http-code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-weight:650}.offline{color:#7c6260;font-size:11px;white-space:nowrap}
+.badge{display:inline-block;font-size:10px;font-weight:650;border-radius:5px;padding:3px 7px;border:1px solid;white-space:nowrap}.badge.yes{color:#096649;background:#e8f7ef;border-color:#c1e8d5}.badge.probable{color:#885610;background:#fff6e4;border-color:#f1dfb8}.badge.unknown{color:#637078;background:#f2f4f5;border-color:#e0e6e7}.version{display:block;font:11px ui-monospace,SFMono-Regular,Consolas,monospace;margin-top:5px;color:var(--muted)}
+details{min-width:120px;max-width:500px}summary{cursor:pointer;white-space:nowrap;color:var(--teal);font-weight:600;font-size:11px}.detail-content{min-width:245px;padding-top:10px;max-width:500px;overflow-wrap:anywhere}dl{margin:0;display:grid;grid-template-columns:100px minmax(0,1fr);gap:5px 10px;font-size:11px}dt{color:var(--muted)}dd{margin:0}h4{font-size:11px;margin:14px 0 4px}.detail-content p{font-size:11px;white-space:pre-wrap;margin:0;color:#4b5d61}
+.empty{padding:40px 24px;text-align:center;color:var(--muted)}[hidden]{display:none!important}.legend{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;color:var(--muted);font-size:11px;margin-top:18px}.legend p{margin:0;flex:1;min-width:260px}.footer{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-top:24px;color:var(--muted);font-size:11px}.footer p{margin:0;max-width:820px}noscript p{padding:12px 24px;background:#fff6e4}
+@media(max-width:1000px){.filters{grid-template-columns:repeat(2,minmax(0,1fr))}.filters label:first-child{grid-column:1/-1}.stats{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){main{padding:18px 14px}.stat{padding:15px}.stat strong{font-size:28px}.filters{padding:0 16px 18px;gap:8px}.heading{align-items:flex-start}.print{padding:7px 10px;font-size:12px}.section-heading{padding:18px 16px;flex-wrap:wrap}.topline{align-items:flex-start}.status{font-size:10px}.stats{gap:10px}header{padding:22px 18px}.progress{flex-wrap:wrap}}
+@media print{header{color:#142f33;background:white;padding:0 0 20px}header p,.eyebrow{color:#586b70}.status{color:#142f33}.print,.filters,summary,.progress{display:none}.stats{gap:8px}.stat{padding:10px}.stat strong{font-size:24px}main{padding:0}body{background:white}.results{overflow:visible}.table-wrap{overflow:visible}table{min-width:0}th,td{padding:9px 7px}.detail-content{min-width:0}a{color:#172a30}.legend{break-inside:avoid}}
+</style>
+<style>
+.filters{grid-template-columns:1.8fr 1.2fr 1fr 1.1fr 1fr 1fr}.coverage{margin-top:24px;padding:22px 24px;background:white;border:1px solid var(--line);border-radius:12px;font-size:12px}.coverage h2{margin-bottom:12px}.coverage p{margin:7px 0}.coverage-warning{margin:14px 0;padding:14px;background:#fff3de;border:1px solid #edca91;border-radius:7px;color:#775021;overflow-wrap:anywhere}.coverage-warning li{margin:6px 0}.coverage-details{max-width:none;margin:12px 0}.coverage-details ul{max-height:260px;overflow:auto;padding-right:20px}.coverage-details li{margin:6px 0;overflow-wrap:anywhere}@media(max-width:1100px){.filters{grid-template-columns:repeat(3,minmax(0,1fr))}.filters label:first-child{grid-column:auto}}@media(max-width:650px){.filters{grid-template-columns:repeat(2,minmax(0,1fr))}.filters label:first-child{grid-column:1/-1}}
+</style>
+<style>
+.risk{display:inline-block;font-size:10px;padding:4px 7px;border-radius:5px;max-width:135px;text-transform:capitalize}.risk.critical{color:#a91d32;background:#fff0f2;border:1px solid #ffc4cf}.risk.high{color:#9b5615;background:#fff5e7}.risk.medium{color:#65501d;background:#faf5dd}.risk.info{color:#586b70;background:#f2f5f4}.advisory-note{margin:14px 0 0;padding:12px 16px;border-left:3px solid #c23751;background:#fff3f4;font-size:12px;color:#712c39}
+</style>
+</head>
+<body>
+<header>
+ <div class="topline"><div class="brand">AZURE<span> / </span>PHP SCOUT</div><span class="status $status">$status_label</span></div>
+ <p class="eyebrow">Virtual machines · App Services · Static Web Apps</p>
+ <div class="heading"><div><h1>PHP &amp; WordPress report</h1><p>See which endpoints expose technology signatures, then inspect the evidence behind each finding.</p></div><button class="print" id="print" type="button">Print / Save PDF</button></div>
+</header>
+<main>
+ <section class="stats" aria-label="Scan summary">
+  <div class="stat"><span class="stat-label">Endpoints scanned</span><strong>$total</strong><small>of $expected selected endpoints</small></div>
+  <div class="stat"><span class="stat-label">HTTP responses</span><strong>$responded</strong><small>$unavailable without a response</small></div>
+  <div class="stat accent"><span class="stat-label">PHP signals</span><strong>$php_count</strong><small>$php_yes detected · $php_probable probable</small></div>
+  <div class="stat accent"><span class="stat-label">WordPress signals</span><strong>$wp_count</strong><small>$wp_yes detected · $wp_probable probable</small></div>
+ </section>
+ <p class="advisory-note"><strong>$potential_count endpoint(s) potentially affected by tracked PHP advisories.</strong> Rules reviewed $advisory_date. Version evidence requires package, backport, and deployment verification. This catalog tracks two CVEs and does not establish exploitability or complete vulnerability coverage.</p>
+ <div class="progress"><progress max="100" value="$progress" aria-label="Scan completion">$progress%</progress><span>$status_label · $total / $expected endpoints</span></div>
+ $coverage
+ <section class="results" aria-labelledby="results-heading">
+  <div class="section-heading"><h2 id="results-heading">Endpoint results</h2><span class="count" id="result-count" role="status" aria-live="polite">$row_count result rows · $total unique endpoints</span></div>
+  <div class="filters">
+   <label>Search<input id="search" type="search" placeholder="Customer, IP, hostname, version, evidence…" autocomplete="off"></label>
+   <label>Customer<select id="customer"><option value="">All customers</option>$customer_options</select></label>
+   <label>Resource type<select id="resource"><option value="">All resource types</option><option value="vm">Virtual machines</option><option value="appservice">App Services</option><option value="staticwebapp">Static Web Apps</option><option value="target">Manual targets</option></select></label>
+   <label>Technology<select id="technology"><option value="">All technologies</option><option value="any">PHP or WordPress signals</option><option value="wordpress">WordPress signals</option><option value="php">PHP signals</option><option value="unknown">No technology signals</option></select></label>
+   <label>Connection<select id="connection"><option value="">All endpoints</option><option value="yes">Responded</option><option value="no">No response</option></select></label>
+   <label>Sort by<select id="sort"><option value="findings">Findings first</option><option value="customer">Customer</option><option value="target">Target address</option></select></label>
+  </div>
+  <noscript><p>All results are shown below. Enable JavaScript to search, filter, and sort them.</p></noscript>
+  <div class="table-wrap"><table><thead><tr><th scope="col">Customer / asset</th><th scope="col">Endpoint</th><th scope="col">HTTP</th><th scope="col">PHP</th><th scope="col">WordPress</th><th scope="col">Assessment</th><th scope="col">Evidence &amp; metadata</th></tr></thead>
+   <tbody id="results">$rows</tbody>
+  </table></div>
+  <div class="empty" id="empty"$empty_hidden>No results match the current filters. If the scan is still running, refresh this file to see its latest results.</div>
+ </section>
+ <div class="legend"><span class="badge yes">Detected</span><span class="badge probable">Probable</span><span class="badge unknown">Unknown</span><p>Detected = explicit signature. Probable = indirect evidence. Unknown = insufficient evidence; it does not establish absence.</p></div>
+ <footer class="footer"><p>Each summary counts unique address, hostname, and port combinations. WordPress can imply PHP without confirming that PHP executes on this server. Inventory runtime settings appear only in the row details.</p><span>Report generated <time datetime="$timestamp">$timestamp</time></span></footer>
+</main>
+<script>
+(() => {
+  'use strict';
+  const body = document.getElementById('results');
+  const rows = Array.from(body.querySelectorAll('tr.result'));
+  const search = document.getElementById('search');
+  const customer = document.getElementById('customer');
+  const resource = document.getElementById('resource');
+  const technology = document.getElementById('technology');
+  const connection = document.getElementById('connection');
+  const sort = document.getElementById('sort');
+  const searchable = new Map(rows.map(row => [row, row.textContent.toLocaleLowerCase()]));
+  const compare = (a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'});
+  function update() {
+    const query = search.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    for (const row of rows) {
+      const d = row.dataset;
+      const php = d.php !== 'unknown', wp = d.wp !== 'unknown';
+      const matchesTechnology = !technology.value ||
+        (technology.value === 'any' && (php || wp)) ||
+        (technology.value === 'php' && php) ||
+        (technology.value === 'wordpress' && wp) ||
+        (technology.value === 'unknown' && !php && !wp);
+      row.hidden = !((!query || searchable.get(row).includes(query)) &&
+        (!customer.value || d.customer === customer.value) && matchesTechnology &&
+        (!resource.value || d.resource === resource.value) &&
+        (!connection.value || d.reachable === connection.value));
+      if (!row.hidden) visible++;
+    }
+    document.getElementById('result-count').textContent = visible + ' of ' + rows.length + ' result rows';
+    document.getElementById('empty').hidden = visible !== 0;
+  }
+  function reorder() {
+    rows.sort((a, b) => {
+      if (sort.value === 'findings') {
+        const rank = Number(a.dataset.rank) - Number(b.dataset.rank);
+        if (rank) return rank;
+      }
+      if (sort.value !== 'target') {
+        const customerOrder = compare(a.dataset.customer, b.dataset.customer);
+        if (customerOrder) return customerOrder;
+      }
+      return compare(a.dataset.target, b.dataset.target) ||
+        Number(a.dataset.port) - Number(b.dataset.port);
+    });
+    for (const row of rows) body.appendChild(row);
+  }
+  search.addEventListener('input', update);
+  for (const control of [customer, resource, technology, connection]) control.addEventListener('change', update);
+  sort.addEventListener('change', reorder);
+  document.getElementById('print').addEventListener('click', () => window.print());
+  for (const time of document.querySelectorAll('time[datetime]')) {
+    const date = new Date(time.dateTime);
+    if (!Number.isNaN(date.getTime())) time.textContent = date.toLocaleString();
+  }
+  update();
+})();
+</script>
+</body>
+</html>

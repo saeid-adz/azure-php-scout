@@ -1,0 +1,3 @@
+publicIp,hostname,vm,subscription,resourceType
+192.0.2.10,checkout.example.invalid,checkout-vm,Example subscription,vm
+,docs.example.invalid,,Example subscription,staticwebapp
