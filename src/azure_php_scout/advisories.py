@@ -10,7 +10,7 @@ ASSESSMENT_FIELDS = ["assessment", "riskLevel", "cves", "assessmentBasis", "reme
 
 @lru_cache(maxsize=1)
 def catalog():
-    return json.loads(files("azure_php_scout").joinpath("data/advisories.json").read_text())
+    return json.loads(files("azure_php_scout").joinpath("data/advisories.json").read_text(encoding="utf-8"))
 
 
 def parse_version(value):

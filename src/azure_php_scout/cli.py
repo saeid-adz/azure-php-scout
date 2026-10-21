@@ -60,7 +60,7 @@ def main(argv=None):
                 writer.writeheader()
                 writer.writerows({key: csv_cell(value) for key, value in row.items()} for row in rows)
             coverage = source.with_suffix(".coverage.json")
-            scope = json.loads(coverage.read_text()) if coverage.exists() else dict(source="Imported scan results; original coverage unavailable")
+            scope = json.loads(coverage.read_text(encoding="utf-8")) if coverage.exists() else dict(source="Imported scan results; original coverage unavailable")
             write_html_report(html, rows, status="imported", scope=scope)
         except (OSError, ValueError, csv.Error) as exc:
             parser.error(str(exc))

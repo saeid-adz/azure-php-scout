@@ -89,7 +89,13 @@ def discover_open_ports(addresses, ports, *, workers=256, timeout=1, rate=1000,
                     wait = min(wait, max(0, next_attempt - time.monotonic()))
                 if pending:
                     wait = min(wait, max(0, min(item[2] for item in pending.values()) - time.monotonic()))
-                for key, _ in selector.select(wait):
+                    ready = selector.select(wait)
+                else:
+                    # Windows select() rejects an empty socket set. Wait on the
+                    # cancellation event while rate limiting or finishing work.
+                    stop.wait(wait if not exhausted else 0)
+                    ready = []
+                for key, _ in ready:
                     sock = key.fileobj
                     error = sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
                     if error in local_errors:

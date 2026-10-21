@@ -34,7 +34,7 @@ def service_token(root):
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
-        token = path.read_text().strip()
+        token = path.read_text(encoding="utf-8").strip()
     else:
         token = secrets.token_urlsafe(32)
         with os.fdopen(descriptor, "w") as output:

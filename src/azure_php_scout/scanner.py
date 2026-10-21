@@ -530,7 +530,7 @@ def convert_report(options):
         print("{} result rows validated; no report written".format(len(rows)), file=sys.stderr)
     else:
         coverage = Path(options.report_from).with_suffix(".coverage.json")
-        scope = json.loads(coverage.read_text()) if coverage.exists() else None
+        scope = json.loads(coverage.read_text(encoding="utf-8")) if coverage.exists() else None
         write_html_report(path, rows, status="imported", scope=scope)
         print("HTML report: {} ({} result rows)".format(path, len(rows)), file=sys.stderr)
     return 0

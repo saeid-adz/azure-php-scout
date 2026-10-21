@@ -155,7 +155,7 @@ class InputTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
                 scanner.main(["-i", str(inventory), "-o", str(inventory)])
             self.assertEqual(error.exception.code, 2)
-            self.assertEqual(inventory.read_text(), content)
+            self.assertEqual(inventory.read_text(encoding="utf-8"), content)
 
 
 class ReportTests(unittest.TestCase):
@@ -178,7 +178,7 @@ class ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "report.html"
             web_report.write_html_report(report, [self.row(), self.row(subscription="Customer B")], expected=5)
-            html = report.read_text()
+            html = report.read_text(encoding="utf-8")
             self.assertEqual(re.findall(r'<strong>(\d+)</strong>', html)[:4], ["1", "1", "1", "1"])
             self.assertEqual(html.count('<tr class="result"'), 2)
             self.assertIn("Customer A", html)
@@ -191,7 +191,7 @@ class ReportTests(unittest.TestCase):
             hostile = '</script><script>alert("xss")</script><img src=x onerror=alert(1)>'
             web_report.write_html_report(report, [self.row(title=hostile, evidence=hostile,
                 subscription='Bad"><img src=x onerror=alert(1)>', finalUrl="javascript:alert(1)")])
-            html = report.read_text()
+            html = report.read_text(encoding="utf-8")
             self.assertEqual(html.count("<script>"), 1)  # Only the fixed report script.
             self.assertNotIn("<img", html)
             self.assertNotIn('href="javascript:', html)
@@ -202,7 +202,7 @@ class ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "report.html"
             web_report.write_html_report(report, [], status="interrupted", expected=10)
-            html = report.read_text()
+            html = report.read_text(encoding="utf-8")
             self.assertIn("Scan interrupted", html)
             self.assertIn("0 / 10 endpoints", html)
             self.assertIn('id="empty">', html)
@@ -219,7 +219,7 @@ class ReportTests(unittest.TestCase):
                 with contextlib.redirect_stderr(io.StringIO()):
                     self.assertEqual(scanner.main(["--report-from", str(source), "--html", str(report)]), 0)
             self.assertEqual(source.read_bytes(), original)
-            self.assertIn("Imported CSV results", report.read_text())
+            self.assertIn("Imported CSV results", report.read_text(encoding="utf-8"))
 
     def test_import_rejects_inventory_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -241,12 +241,12 @@ class ReportTests(unittest.TestCase):
             with source.open(newline="") as file:
                 rows = list(csv.DictReader(file))
             self.assertIn(r"AMQP\x00\x01", rows[0]["note"])
-            self.assertIn(r"AMQP\x00\x01", source.with_suffix(".html").read_text())
+            self.assertIn(r"AMQP\x00\x01", source.with_suffix(".html").read_text(encoding="utf-8"))
             # Older scanner CSVs can also contain these raw protocol bytes.
-            source.write_text(source.read_text().replace(r"AMQP\x00\x01", "AMQP\x00\x01"))
+            source.write_text(source.read_text(encoding="utf-8").replace(r"AMQP\x00\x01", "AMQP\x00\x01"))
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(scanner.main(["--report-from", str(source)]), 0)
-            self.assertNotIn("\x00", source.with_suffix(".html").read_text())
+            self.assertNotIn("\x00", source.with_suffix(".html").read_text(encoding="utf-8"))
 
     def test_html_path_cannot_overwrite_inventory_or_csv_output(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -257,7 +257,7 @@ class ReportTests(unittest.TestCase):
                     with self.assertRaises(SystemExit) as error:
                         scanner.main(["-i", str(source), "-o", str(output), "--html", str(destination)])
                     self.assertEqual(error.exception.code, 2)
-            self.assertEqual(source.read_text(), "publicIp\n192.0.2.1\n")
+            self.assertEqual(source.read_text(encoding="utf-8"), "publicIp\n192.0.2.1\n")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -375,7 +375,7 @@ class NetworkTests(unittest.TestCase):
                 self.assertEqual((rows[0]["vm"], rows[0]["subscription"], rows[0]["title"]),
                                  ("VM1", "Customer, AB", "A, B & C"))
                 self.assertEqual(rows[0]["phpVersion"], "8.2.9")
-                html = output.with_suffix(".html").read_text()
+                html = output.with_suffix(".html").read_text(encoding="utf-8")
                 self.assertIn("Scan complete", html)
                 self.assertIn("Customer, AB", html)
                 self.assertIn("8.2.9", html)

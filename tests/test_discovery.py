@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import socket
+import selectors
 import tempfile
 import threading
 import unittest
@@ -75,6 +76,19 @@ class AzureInventoryTests(unittest.TestCase):
 
 
 class PortDiscoveryTests(unittest.TestCase):
+    def test_discovery_never_polls_an_empty_socket_set(self):
+        class WindowsLikeSelector(selectors.SelectSelector):
+            def select(self, timeout=None):
+                if not self.get_map():
+                    raise OSError("Windows rejects select() with no sockets")
+                return super().select(timeout)
+
+        with local_server({'/': (200, {}, 'Hello')}) as server:
+            with patch('azure_php_scout.discovery.selectors.DefaultSelector', WindowsLikeSelector):
+                found = list(discover_open_ports(['127.0.0.1'], [server.server_port],
+                             stop=threading.Event()))
+                self.assertEqual(found, [('127.0.0.1', server.server_port)])
+
     def test_port_ranges_and_complete_tcp_scope(self):
         self.assertEqual(scanner.parse_ports('80,443,8000-8002,80'), [80, 443, 8000, 8001, 8002])
         self.assertEqual(len(scanner.parse_ports('all')), 65535)
@@ -114,10 +128,10 @@ class PortDiscoveryTests(unittest.TestCase):
                 self.assertEqual(rows[0]['tcpOpen'], 'yes')
                 self.assertEqual(rows[0]['resourceType'], 'vm')
                 self.assertEqual(rows[0]['phpVersion'], '8.4.1')
-                scope = json.loads(output.with_suffix('.coverage.json').read_text())
+                scope = json.loads(output.with_suffix('.coverage.json').read_text(encoding="utf-8"))
                 self.assertEqual(scope['tcp']['open'], 1)
                 self.assertEqual(scope['tcp']['checked'], 1)
-                html = output.with_suffix('.html').read_text()
+                html = output.with_suffix('.html').read_text(encoding="utf-8")
                 self.assertIn('Custom port', html)
                 self.assertIn('TCP discovery:', html)
 
@@ -137,7 +151,7 @@ class PortDiscoveryTests(unittest.TestCase):
             output = Path(directory) / 'results.html'
             write_html_report(output, [], status='failed', scope=dict(errors=['<script>alert(1)</script>'],
                 skipped=[dict(vm='<img src=x>', reason='No IP')], vmPortScope='Full TCP range 1–65535'))
-            html = output.read_text()
+            html = output.read_text(encoding="utf-8")
             self.assertIn('Incomplete coverage', html)
             self.assertIn('&lt;script&gt;', html)
             self.assertNotIn('<img', html)
