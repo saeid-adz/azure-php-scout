@@ -25,6 +25,7 @@ def now():
 
 
 def summarize(rows):
+    rows = list(rows)
     unique = {endpoint_key(row): row for row in rows}.values()
     result = dict(endpoints=0, responded=0, php=0, wordpress=0, potentiallyAffected=0, endOfLife=0, verifyVersion=0)
     for row in unique:
@@ -35,6 +36,8 @@ def summarize(rows):
         result["potentiallyAffected"] += row.get("assessment") == "potentially_affected"
         result["endOfLife"] += row.get("assessment") == "end_of_life"
         result["verifyVersion"] += row.get("assessment") in ("verify_version", "configuration_only")
+    result["guestVms"] = len({row.get("resourceId") for row in rows if row.get("evidenceSource") == "guest"})
+    result["guestChecked"] = len({row.get("resourceId") for row in rows if row.get("guestStatus") in ("checked", "incomplete")})
     return result
 
 
@@ -133,7 +136,7 @@ class JobManager:
             return []
         with path.open(newline="", encoding="utf-8-sig") as source:
             return [enrich(row) for row in csv.DictReader(source)
-                    if row.get("target") and row.get("port") and row.get("php") is not None]
+                    if row.get("target") and (row.get("port") or row.get("evidenceSource") == "guest") and row.get("php") is not None]
 
     def coverage(self, job_id):
         path = self.directory(job_id) / "results.coverage.json"
@@ -145,6 +148,12 @@ class JobManager:
             return {}
 
     def command(self, config, folder):
+        if config["mode"] == "guest":
+            args = [sys.executable, "-m", "azure_php_scout", "guest", "-o", str(folder / "results.csv"),
+                    "--guest-timeout", str(config["guest_timeout"])]
+            for resource_id in config["vm_ids"]:
+                args.extend(["--vm-id", resource_id])
+            return args
         args = [sys.executable, "-m", "azure_php_scout", "scan", "-o", str(folder / "results.csv")]
         if config["mode"] == "azure":
             args.append("--azure")
@@ -216,6 +225,8 @@ class JobManager:
                 rows = self.rows(job_id)
                 coverage = self.coverage(job_id)
                 state = "cancelled" if cancelled else "complete" if code == 0 else "partial" if rows else "failed"
+                if code and not cancelled and job["config"]["mode"] == "guest" and not coverage.get("guest", {}).get("checked"):
+                    state = "failed"
                 errors = "; ".join(coverage.get("errors", []))
                 if code and not errors and not cancelled:
                     errors = "Scanner exited with status {}. Inspect the scan log for details.".format(code)

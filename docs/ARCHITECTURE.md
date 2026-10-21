@@ -7,6 +7,9 @@ flowchart LR
     API --> Queue[Single-worker queue]
     Queue --> Worker[Isolated scan subprocess]
     Worker --> Inventory[Azure CLI / Resource Graph]
+    Queue --> Guest[Explicitly selected guest inspection subprocess]
+    Guest --> Agent[Azure Run Command / VM Agent]
+    Agent --> Rules
     Worker --> TCP[Bounded TCP connect discovery]
     TCP --> HTTP[Bounded HTTP and HTTPS probes]
     HTTP --> Rules[Version evidence + reviewed advisory rules]
@@ -18,6 +21,13 @@ flowchart LR
 `discovery.py` uses a selector with bounded sockets and rate control; it does not
 allocate a future per port. `scanner.py` feeds a bounded HTTP queue from open TCP
 connections. Managed hostnames are checked directly on HTTP/HTTPS ports.
+
+`guest.py` implements a separate opt-in workflow on explicit VM IDs. It checks
+power/agent readiness, then submits a fixed packaged Linux/Windows script using
+the target subscription. Results use a bounded framed output protocol, preserve
+per-VM failures and remote cancellation uncertainty, and label package/disk
+versions separately from HTTP evidence. Reader-only inventory does not execute
+these scripts. No custom guest script is accepted by the API.
 
 `advisories.py` separates observed runtime versions, configuration values, missing
 versions, upstream lifecycle, and branch-specific CVE ranges. `report.py` renders

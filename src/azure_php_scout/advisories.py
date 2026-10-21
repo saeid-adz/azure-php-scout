@@ -27,7 +27,7 @@ def parse_version(value):
     return tuple(map(int, match.group(1, 2, 3))), prerelease, bool(suffix and not prerelease)
 
 
-def assess(row, *, as_of=None, rules=None):
+def _assess(row, *, as_of=None, rules=None):
     rules = rules or catalog()
     as_of = as_of or date.today()
     result = dict(assessment="undetermined", riskLevel="info", cves="", phpSupport="unknown",
@@ -91,6 +91,15 @@ def assess(row, *, as_of=None, rules=None):
     if result["matches"] and result["phpSupport"] == "end_of_life":
         result["assessmentBasis"] += " This branch is also outside upstream security support."
         result["remediation"] = "Upgrade to a supported PHP branch with current security fixes, or obtain a supported vendor-confirmed security backport. Restart/redeploy workers and verify the serving runtime and package build."
+    return result
+
+
+def assess(row, *, as_of=None, rules=None):
+    result = _assess(row, as_of=as_of, rules=rules)
+    if row.get("evidenceSource") == "guest":
+        result["assessmentBasis"] = "Guest package/disk inventory; this does not confirm the PHP runtime executing HTTP requests. " + result["assessmentBasis"]
+        if row.get("guestSource") == "package":
+            result["remediation"] += " Verify the distribution/vendor security status of the complete package version."
     return result
 
 

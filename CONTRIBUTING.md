@@ -14,6 +14,10 @@ python -m build
 
 Tests query synthetic Azure records and local TCP/HTTP/HTTPS fixtures. They must
 never automatically scan a contributor's subscriptions or public addresses.
+Guest inspection tests must mock Azure invocation. Cover Windows and Linux,
+private VMs, explicit scope, stopped/unready agents, per-VM permission failures,
+truncated output, and remote execution uncertainty. Script changes require syntax
+checks and bounded-output fixtures; never run them against customer VMs in CI.
 Some environments require permission for local socket listeners. The TLS fixture
 uses OpenSSL and is skipped when it is not installed.
 

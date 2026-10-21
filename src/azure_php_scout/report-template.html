@@ -43,32 +43,32 @@ details{min-width:120px;max-width:500px}summary{cursor:pointer;white-space:nowra
 </header>
 <main>
  <section class="stats" aria-label="Scan summary">
-  <div class="stat"><span class="stat-label">Endpoints scanned</span><strong>$total</strong><small>of $expected selected endpoints</small></div>
-  <div class="stat"><span class="stat-label">HTTP responses</span><strong>$responded</strong><small>$unavailable without a response</small></div>
+  <div class="stat"><span class="stat-label">$result_label</span><strong>$total</strong><small>of $expected selected $result_unit</small></div>
+  <div class="stat"><span class="stat-label">$connection_label</span><strong>$connection_count</strong><small>$connection_detail</small></div>
   <div class="stat accent"><span class="stat-label">PHP signals</span><strong>$php_count</strong><small>$php_yes detected · $php_probable probable</small></div>
   <div class="stat accent"><span class="stat-label">WordPress signals</span><strong>$wp_count</strong><small>$wp_yes detected · $wp_probable probable</small></div>
  </section>
- <p class="advisory-note"><strong>$potential_count endpoint(s) potentially affected by tracked PHP advisories.</strong> Rules reviewed $advisory_date. Version evidence requires package, backport, and deployment verification. This catalog tracks two CVEs and does not establish exploitability or complete vulnerability coverage.</p>
- <div class="progress"><progress max="100" value="$progress" aria-label="Scan completion">$progress%</progress><span>$status_label · $total / $expected endpoints</span></div>
+ <p class="advisory-note"><strong>$potential_count $result_unit potentially affected by tracked PHP advisories.</strong> Rules reviewed $advisory_date. Version evidence requires package, backport, and deployment verification. This catalog tracks two CVEs and does not establish exploitability or complete vulnerability coverage.</p>
+ <div class="progress"><progress max="100" value="$progress" aria-label="Scan completion">$progress%</progress><span>$status_label · $total / $expected $result_unit</span></div>
  $coverage
  <section class="results" aria-labelledby="results-heading">
-  <div class="section-heading"><h2 id="results-heading">Endpoint results</h2><span class="count" id="result-count" role="status" aria-live="polite">$row_count result rows · $total unique endpoints</span></div>
+  <div class="section-heading"><h2 id="results-heading">Endpoint results</h2><span class="count" id="result-count" role="status" aria-live="polite">$row_count result rows · $total unique $result_unit</span></div>
   <div class="filters">
    <label>Search<input id="search" type="search" placeholder="Customer, IP, hostname, version, evidence…" autocomplete="off"></label>
    <label>Customer<select id="customer"><option value="">All customers</option>$customer_options</select></label>
    <label>Resource type<select id="resource"><option value="">All resource types</option><option value="vm">Virtual machines</option><option value="appservice">App Services</option><option value="staticwebapp">Static Web Apps</option><option value="target">Manual targets</option></select></label>
    <label>Technology<select id="technology"><option value="">All technologies</option><option value="any">PHP or WordPress signals</option><option value="wordpress">WordPress signals</option><option value="php">PHP signals</option><option value="unknown">No technology signals</option></select></label>
-   <label>Connection<select id="connection"><option value="">All endpoints</option><option value="yes">Responded</option><option value="no">No response</option></select></label>
+   <label>$connection_filter_label<select id="connection">$connection_options</select></label>
    <label>Sort by<select id="sort"><option value="findings">Findings first</option><option value="customer">Customer</option><option value="target">Target address</option></select></label>
   </div>
   <noscript><p>All results are shown below. Enable JavaScript to search, filter, and sort them.</p></noscript>
-  <div class="table-wrap"><table><thead><tr><th scope="col">Customer / asset</th><th scope="col">Endpoint</th><th scope="col">HTTP</th><th scope="col">PHP</th><th scope="col">WordPress</th><th scope="col">Assessment</th><th scope="col">Evidence &amp; metadata</th></tr></thead>
+  <div class="table-wrap"><table><thead><tr><th scope="col">Customer / asset</th><th scope="col">Endpoint</th><th scope="col">$connection_header</th><th scope="col">PHP</th><th scope="col">WordPress</th><th scope="col">Assessment</th><th scope="col">Evidence &amp; metadata</th></tr></thead>
    <tbody id="results">$rows</tbody>
   </table></div>
   <div class="empty" id="empty"$empty_hidden>No results match the current filters. If the scan is still running, refresh this file to see its latest results.</div>
  </section>
  <div class="legend"><span class="badge yes">Detected</span><span class="badge probable">Probable</span><span class="badge unknown">Unknown</span><p>Detected = explicit signature. Probable = indirect evidence. Unknown = insufficient evidence; it does not establish absence.</p></div>
- <footer class="footer"><p>Each summary counts unique address, hostname, and port combinations. WordPress can imply PHP without confirming that PHP executes on this server. Inventory runtime settings appear only in the row details.</p><span>Report generated <time datetime="$timestamp">$timestamp</time></span></footer>
+ <footer class="footer"><p>External summaries count address, hostname, and port combinations; guest summaries count VM software/version records. WordPress can imply PHP without confirming that PHP executes on this server. Inventory runtime settings appear only in the row details.</p><span>Report generated <time datetime="$timestamp">$timestamp</time></span></footer>
 </main>
 <script>
 (() => {
@@ -97,7 +97,9 @@ details{min-width:120px;max-width:500px}summary{cursor:pointer;white-space:nowra
       row.hidden = !((!query || searchable.get(row).includes(query)) &&
         (!customer.value || d.customer === customer.value) && matchesTechnology &&
         (!resource.value || d.resource === resource.value) &&
-        (!connection.value || d.reachable === connection.value));
+        (!connection.value || d.reachable === connection.value ||
+          (connection.value === 'inspected' && ['checked','incomplete'].includes(d.guestStatus)) ||
+          (connection.value === 'uninspected' && !['checked','incomplete'].includes(d.guestStatus))));
       if (!row.hidden) visible++;
     }
     document.getElementById('result-count').textContent = visible + ' of ' + rows.length + ' result rows';

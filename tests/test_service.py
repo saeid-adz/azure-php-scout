@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from azure_php_scout.jobs import JobManager
 from azure_php_scout.service import create_app, service_token
 from test_web_scan import local_server
+from test_guest import LINUX, WINDOWS, SUBSCRIPTION, azure_reader, output
 
 TOKEN = "test-only-token-do-not-use-in-deployment-0000"
 AUTH = {"Authorization": "Bearer " + TOKEN}
@@ -87,6 +88,49 @@ class ServiceTests(unittest.TestCase):
     def test_service_lock_prevents_two_workers_owning_one_data_directory(self):
         with self.assertRaises(RuntimeError):
             JobManager(self.directory.name)
+
+    def test_guest_api_protects_scripts_and_lists_private_vms(self):
+        self.assertEqual(self.client.get('/api/guest/scripts/Linux').status_code, 401)
+        script = self.client.get('/api/guest/scripts/Windows', headers=AUTH).json()
+        self.assertEqual(script['commandId'], 'RunPowerShellScript')
+        self.assertEqual(len(script['sha256']), 64)
+        self.assertIn('FileVersionInfo', script['script'])
+        with patch('azure_php_scout.service.list_vms', return_value=dict(vms=[dict(resourceId=LINUX, os='Linux')], errors=[])) as lookup:
+            response = self.client.get('/api/azure/vms?subscription=' + SUBSCRIPTION, headers=AUTH)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()['vms'][0]['resourceId'], LINUX)
+            lookup.assert_called_once_with([SUBSCRIPTION])
+        self.assertEqual(self.client.get('/api/azure/vms?subscription=invalid', headers=AUTH).status_code, 422)
+        self.assertEqual(self.client.post('/api/scans', headers=AUTH, json=dict(mode='guest')).status_code, 422)
+
+    def test_guest_background_worker_and_exports_with_mocked_azure(self):
+        fixture = Path(self.directory.name) / 'guest-fixture.py'
+        # Real job subprocess and guest worker; Azure adapters return synthetic data.
+        fixture.write_text('''import sys
+from azure_php_scout.guest import run_guest
+sys.path.insert(0, sys.argv[1])
+from test_guest import LINUX, WINDOWS, azure_reader, output
+def invoke(identifier, os, timeout, stop):
+    return output(os=os, path='C:/PHP/php.exe' if os == 'Windows' else '/usr/bin/php')
+raise SystemExit(run_guest([LINUX, WINDOWS], 'results.csv', runner=azure_reader, invoker=invoke))
+''', encoding='utf-8')
+        with patch('azure_php_scout.service.shutil.which', return_value='fixture-az'), patch.object(
+                JobManager, 'command', return_value=[sys.executable, str(fixture), str(Path(__file__).parent)]):
+            created = self.client.post('/api/scans', headers=AUTH, json=dict(mode='guest', name='Synthetic guest fixture', vm_ids=[LINUX, WINDOWS]))
+            self.assertEqual(created.status_code, 202)
+            job = self.wait(created.json()['id'])
+        self.assertEqual(job['state'], 'complete', job)
+        self.assertEqual(job['summary']['guestChecked'], 2)
+        self.assertEqual(job['summary']['responded'], 0)
+        self.assertEqual(job['summary']['potentiallyAffected'], 2)
+        path = '/api/scans/' + job['id']
+        rows = self.client.get(path + '/results', headers=AUTH).json()['rows']
+        self.assertEqual({row['os'] for row in rows}, {'Linux', 'Windows'})
+        self.assertTrue(all(row['evidenceSource'] == 'guest' for row in rows))
+        html = self.client.get(path + '/export/html', headers=AUTH).text
+        self.assertIn('Guest inspection', html)
+        self.assertIn('VMs inspected', html)
+        self.assertNotIn('port </small>', html)
 
     def test_cancellation_preserves_a_terminal_job(self):
         created = self.client.post("/api/scans", headers=AUTH, json=dict(mode="demo", name="Cancelled demo")).json()

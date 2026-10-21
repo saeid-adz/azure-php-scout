@@ -57,22 +57,32 @@ async function loadSelected() {
   if (selected !== state.selected || !state.token) return;
   state.lastState = job.state;
   const summary = job.summary || {}, scope = job.coverage || {}, resources = scope.resources || {}, tcp = scope.tcp || {};
+  const guest = job.config.mode === 'guest', guestScope = scope.guest || {};
+  $('coverage-scope-label').textContent = guest ? 'Inspection method' : 'VM port scope';
+  $('coverage-progress-label').textContent = guest ? 'VM progress' : 'TCP discovery';
   $('stat-affected').textContent = summary.potentiallyAffected || 0; $('stat-eol').textContent = summary.endOfLife || 0; $('stat-verify').textContent = summary.verifyVersion || 0; $('stat-http').textContent = summary.responded || 0;
-  $('stat-endpoints').textContent = (summary.endpoints || 0) + ' endpoints checked';
+  $('stat-http-label').textContent = guest ? 'VMs inspected' : 'HTTP endpoints';
+  if (guest) $('stat-http').textContent = guestScope.checked || 0;
+  $('stat-endpoints').textContent = guest ? (summary.endpoints || 0) + ' guest evidence records · ' + (guestScope.requested || job.config.vm_ids.length) + ' VMs selected' : (summary.endpoints || 0) + ' endpoints checked';
   $('scan-state').className = 'status-badge ' + job.state; $('scan-state').textContent = statusLabel(job);
   $('cancel-scan').hidden = !runningStates.has(job.state); $('cancel-scan').disabled = job.state === 'cancelling';
   $('download-html').disabled = !summary.endpoints; $('download-csv').disabled = !summary.endpoints;
   $('demo-notice').hidden = job.config.mode !== 'demo';
-  $('coverage-resources').textContent = resources.vm !== undefined ? resources.vm + ' VMs · ' + (resources.appservice || 0) + ' apps · ' + (resources.staticwebapp || 0) + ' static apps' : scope.source || 'Inventory discovery in progress';
-  $('coverage-ports').textContent = scope.vmPortScope || (job.config.vm_ports === 'all' ? 'Full TCP range 1–65535' : job.config.vm_ports);
-  $('coverage-tcp').textContent = tcp.total ? tcp.checked.toLocaleString() + ' / ' + tcp.total.toLocaleString() + ' · ' + tcp.open + ' open' : job.config.mode === 'demo' ? 'Synthetic data' : 'Waiting for discovery';
+  $('coverage-resources').textContent = guest ? (guestScope.requested || job.config.vm_ids.length) + ' explicitly selected VMs' : resources.vm !== undefined ? resources.vm + ' VMs · ' + (resources.appservice || 0) + ' apps · ' + (resources.staticwebapp || 0) + ' static apps' : scope.source || 'Inventory discovery in progress';
+  $('coverage-ports').textContent = guest ? 'Guest inspection · Azure Run Command' : scope.vmPortScope || (job.config.vm_ports === 'all' ? 'Full TCP range 1–65535' : job.config.vm_ports);
+  $('coverage-tcp').textContent = guest ? (guestScope.completed || 0) + ' / ' + (guestScope.requested || job.config.vm_ids.length) + ' VMs processed · ' + (guestScope.failed || 0) + ' failed' : tcp.total ? tcp.checked.toLocaleString() + ' / ' + tcp.total.toLocaleString() + ' · ' + tcp.open + ' open' : job.config.mode === 'demo' ? 'Synthetic data' : 'Waiting for discovery';
   $('run-progress').hidden = !runningStates.has(job.state);
   $('tcp-progress').value = tcp.total ? Math.round(100 * tcp.checked / tcp.total) : 0;
   $('progress-text').textContent = tcp.total ? tcp.open + ' open TCP ports · ' + (scope.httpChecked || 0) + ' HTTP checks completed' : job.state === 'queued' ? 'Queued behind the current scan' : 'Collecting inventory and HTTP evidence…';
+  if (guest) {
+    $('tcp-progress').value = guestScope.requested ? Math.round(100 * guestScope.completed / guestScope.requested) : 0;
+    $('progress-text').textContent = job.state === 'queued' ? 'Queued behind the current scan' : 'Inspecting selected VMs sequentially via the Azure VM Agent…';
+  }
   const errors = [...(scope.errors || [])]; if (job.error && !errors.includes(job.error)) errors.push(job.error);
+  if (guest && (scope.remoteMayContinue || ['cancelling','cancelled'].includes(job.state))) errors.push('A guest script already submitted to Azure may still be running. Stopping this scan cannot cancel it; check Azure before retrying.');
   $('coverage-errors').replaceChildren(...errors.map(error => el('p', '', error))); $('coverage-errors').hidden = !errors.length;
   const skipped = scope.skipped || [];
-  $('coverage-skipped').textContent = skipped.length ? skipped.length + ' resources have no directly scannable public endpoint. See the HTML/JSON export for full coverage details.' : 'No skipped resources reported in the current snapshot.';
+  $('coverage-skipped').textContent = skipped.length ? skipped.length + (guest ? ' VMs were skipped during guest inspection.' : ' resources have no directly scannable public endpoint.') + ' See the HTML/JSON export for full coverage details.' : 'No skipped resources reported in the current snapshot.';
   await loadFindings();
 }
 async function loadFindings() {
@@ -86,9 +96,11 @@ async function loadFindings() {
   const body = $('findings-body'); body.replaceChildren();
   data.rows.forEach(row => {
     const tr = el('tr');
-    const service = el('td'); service.append(el('span', 'service-name', row.vm || row.app || row.hostname || row.target), el('span', 'endpoint', (row.hostname || row.target) + ':' + row.port), el('span', 'asset-type', resourceLabels[row.resourceType] || 'Manual target'));
+    const guest = row.evidenceSource === 'guest';
+    const service = el('td'); service.append(el('span', 'service-name', row.vm || row.app || row.hostname || row.target), el('span', 'endpoint', guest ? row.guestPath || row.guestPackage || 'Azure VM Agent' : (row.hostname || row.target) + ':' + row.port), el('span', 'asset-type', guest ? 'Guest inventory · ' + (row.os || 'VM') : resourceLabels[row.resourceType] || 'Manual target'));
     const context = el('td'); context.append(el('span', 'customer-name', row.subscription || 'Unassigned'), el('span', 'resource-group', row.resourceGroup || '—'));
     const runtime = el('td'); runtime.append(el('span', 'runtime-version', row.phpVersion ? 'PHP ' + row.phpVersion : row.php === 'unknown' ? 'PHP unknown' : 'PHP version hidden'), el('span', 'signal-label', row.wordpress !== 'unknown' && row.wordpress ? 'WordPress' + (row.wordpressVersion ? ' ' + row.wordpressVersion : ' signals') : row.reachable === 'yes' ? 'HTTP ' + row.httpStatus : row.tcpOpen === 'yes' ? 'Open TCP / no HTTP' : 'No HTTP response'));
+    if (guest) runtime.querySelector('.signal-label').textContent = (row.guestSource || 'Guest check') + ' · ' + row.guestStatus;
     const assessment = el('td'); assessment.append(el('span', 'risk-badge ' + row.riskLevel, labels[row.assessment] || 'Undetermined')); if (row.cves) assessment.append(el('span', 'cve-label', row.cves));
     const action = el('td'); const button = el('button', 'inspect', '↗'); button.type = 'button'; button.setAttribute('aria-label', 'Inspect ' + (row.vm || row.app || row.target)); button.addEventListener('click', () => showDetails(row)); action.append(button);
     tr.append(service, context, runtime, assessment, action); body.append(tr);
@@ -106,7 +118,7 @@ function showDetails(row) {
   $('detail-title').textContent = row.vm || row.app || row.hostname || row.target;
   const content = $('detail-content'); content.replaceChildren(el('span', 'risk-badge ' + row.riskLevel, labels[row.assessment] || 'Undetermined'));
   const grid = el('dl', 'detail-grid');
-  for (const [label, value] of [['Resource type', resourceLabels[row.resourceType]], ['Subscription', row.subscription], ['Resource group', row.resourceGroup], ['Endpoint', row.finalUrl || row.url], ['Reported PHP', row.phpVersions || row.phpVersion], ['WordPress', row.wordpressVersion || row.wordpress], ['Configured PHP', row.configuredPhpVersion], ['Server', row.server], ['HTTP status', row.httpStatus], ['PHP support', row.phpSupport], ['Rules reviewed', row.advisoryReviewedAt]]) { if (value) grid.append(el('dt', '', label), el('dd', '', value)); }
+  for (const [label, value] of [['Resource type', resourceLabels[row.resourceType]], ['OS', row.os], ['Subscription', row.subscription], ['Resource group', row.resourceGroup], ['Endpoint', row.finalUrl || row.url], ['PHP version evidence', row.phpVersions || row.phpVersion], ['WordPress', row.wordpressVersion || row.wordpress], ['Configured PHP', row.configuredPhpVersion], ['Server', row.server], ['HTTP status', row.httpStatus], ['Guest status', row.guestStatus], ['Guest source', row.guestSource], ['Installed binary', row.guestPath], ['Package', row.guestPackage], ['Vendor package version', row.guestPackageVersion], ['PHP process observed', row.guestProcessObserved], ['Script SHA-256', row.guestScriptSha256], ['PHP support', row.phpSupport], ['Rules reviewed', row.advisoryReviewedAt]]) { if (value) grid.append(el('dt', '', label), el('dd', '', value)); }
   content.append(grid);
   section(content, 'Version assessment', row.assessmentBasis); section(content, 'Recommended action', row.remediation); section(content, 'Detection evidence', row.evidence || 'No explicit technology signature was collected.'); if (row.note) section(content, 'Connection notes', row.note);
   if (row.cves) { const group = section(content, 'Official advisories', 'Review the vendor guidance and verify applicability to the deployed runtime.'); for (const item of state.catalog?.advisories || []) if (row.cves.includes(item.id)) group.append(safeLink(item.url, item.id + ' ↗'), el('br')); }
@@ -120,7 +132,15 @@ function showAdvisories() {
   $('advisory-dialog').showModal();
 }
 async function createDemo() { try { const job = await api('/api/scans', {method:'POST', body:JSON.stringify({mode:'demo', name:'Community demo · synthetic resources'})}); state.selected = job.id; state.offset = 0; state.lastState = ''; await refresh(true); toast('Demo loaded. No network scan was started.'); } catch (error) { $('workspace-error').textContent = error.message; } }
-function updateSource() { const mode = $('source-mode').value; $('azure-fields').hidden = mode !== 'azure'; $('target-fields').hidden = mode !== 'targets'; $('inventory-fields').hidden = mode !== 'inventory'; }
+function updateSource() {
+  const mode = $('source-mode').value, guest = mode === 'guest';
+  $('azure-fields').hidden = !['azure','guest'].includes(mode); $('target-fields').hidden = mode !== 'targets'; $('inventory-fields').hidden = mode !== 'inventory';
+  $('guest-fields').hidden = !guest; $('guest-vm-ids').required = guest;
+  $('port-profile-field').hidden = guest; $('port-hint').hidden = guest;
+  $('custom-port-field').hidden = guest || $('port-profile').value !== 'custom';
+  document.querySelector('.advanced').hidden = guest;
+  $('start-scan').textContent = guest ? 'Run guest inspection →' : 'Start discovery →';
+}
 function updateProfile() { const value = $('port-profile').value; $('custom-port-field').hidden = value !== 'custom'; $('port-hint').textContent = value === 'all' ? 'Tests 65,535 TCP ports per public VM address. Large fleets can take hours. Managed application hostnames use ports 80 and 443.' : 'Open VM ports are checked for HTTP and HTTPS. App Services and Static Web Apps use hostname ports 80 and 443.'; }
 $('login-form').addEventListener('submit', async event => { event.preventDefault(); $('login-error').textContent = ''; const button = event.submitter || event.target.querySelector('button[type="submit"]'); button.disabled = true; try { await connect($('token').value.trim()); $('token').value = ''; } catch (error) { $('login-error').textContent = error.message; } finally { button.disabled = false; } });
 $('sign-out').addEventListener('click', logout);
@@ -140,12 +160,37 @@ $('cancel-scan').addEventListener('click', async () => { try { await api('/api/s
 $('load-logs').addEventListener('click', async () => { if (!state.selected) return; try { const data = await api('/api/scans/' + state.selected + '/logs'); $('scan-log').textContent = data.text || 'No log output yet.'; $('scan-log').hidden = false; } catch (error) { toast(error.message); } });
 for (const format of ['html','csv']) $('download-' + format).addEventListener('click', async () => { if (!state.selected) return; try { const blob = await api('/api/scans/' + state.selected + '/export/' + format, {download:true}); const url = URL.createObjectURL(blob); const link = el('a'); link.href = url; link.download = 'azure-php-scout-' + state.selected.slice(0,8) + '.' + format; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (error) { toast(error.message); } });
 $('source-mode').addEventListener('change', updateSource); $('port-profile').addEventListener('change', updateProfile);
+for (const os of ['Linux','Windows']) $('review-' + os.toLowerCase()).addEventListener('click', async () => {
+  try { const data = await api('/api/guest/scripts/' + os); $('script-title').textContent = os + ' · ' + data.commandId; $('script-hash').textContent = 'SHA-256 ' + data.sha256; $('script-content').textContent = data.script; $('script-dialog').showModal(); } catch (error) { $('scan-form-error').textContent = error.message; }
+});
+$('list-vms').addEventListener('click', async () => {
+  const list = $('vm-list'); list.hidden = false; list.textContent = 'Discovering VMs, including private Windows and Linux VMs…';
+  const params = new URLSearchParams();
+  document.querySelector('[name=subscriptions]').value.split(/[\s,;]+/).filter(Boolean).forEach(value => params.append('subscription', value));
+  try {
+    const data = await api('/api/azure/vms?' + params); list.replaceChildren(el('p', '', data.vms.length + ' VMs discovered. Select specific VMs to inspect.'));
+    for (const error of data.errors) list.append(el('p', 'form-error', error));
+    for (const vm of data.vms) {
+      const label = el('label', 'checkbox'), input = el('input'); input.type = 'checkbox';
+      input.checked = $('guest-vm-ids').value.split(/[\s,;]+/).some(value => value.toLowerCase() === vm.resourceId.toLowerCase());
+      input.disabled = !['Windows','Linux'].includes(vm.os) || (vm.powerState !== 'unknown' && vm.powerState.toLowerCase() !== 'powerstate/running');
+      input.addEventListener('change', () => {
+        const selected = $('guest-vm-ids').value.split(/[\s,;]+/).filter(value => value && value.toLowerCase() !== vm.resourceId.toLowerCase());
+        if (input.checked && selected.length >= 50) { input.checked = false; toast('Select at most 50 VMs per guest run.'); return; }
+        if (input.checked) selected.push(vm.resourceId);
+        $('guest-vm-ids').value = selected.join('\n');
+      });
+      label.append(input, el('span', '', vm.vm + ' · ' + vm.os + ' · ' + vm.powerState + ' · ' + vm.subscription + ' / ' + vm.resourceGroup)); list.append(label);
+    }
+  } catch (error) { list.textContent = error.message; }
+});
 $('list-subscriptions').addEventListener('click', async () => { const list = $('subscription-list'); list.hidden = false; list.textContent = 'Checking Azure CLI session…'; try { const records = await api('/api/azure/subscriptions'); list.replaceChildren(el('p', '', records.length + ' enabled subscriptions. Copy the IDs you want into the field above, or leave it empty for all.')); for (const record of records) list.append(el('p', '', record.name + ' · ' + record.id)); } catch (error) { list.textContent = error.message; } });
 $('scan-form').addEventListener('submit', async event => {
   event.preventDefault(); const form = new FormData(event.target); const button = $('start-scan'); button.disabled = true; $('scan-form-error').textContent = '';
   try {
     const mode = form.get('mode'), profile = form.get('profile');
-    const config = {mode, name:form.get('name'), vm_ports:profile === 'custom' ? form.get('custom_ports').trim() : profile, subscriptions:mode === 'azure' ? form.get('subscriptions').split(/[\s,;]+/).filter(Boolean) : [], targets:mode === 'targets' ? form.get('targets').split(/[\s,;]+/).filter(Boolean) : []};
+    const config = {mode, name:form.get('name'), vm_ports:mode === 'guest' ? 'web' : profile === 'custom' ? form.get('custom_ports').trim() : profile, subscriptions:['azure','guest'].includes(mode) ? form.get('subscriptions').split(/[\s,;]+/).filter(Boolean) : [], targets:mode === 'targets' ? form.get('targets').split(/[\s,;]+/).filter(Boolean) : []};
+    if (mode === 'guest') { config.vm_ids = form.get('vm_ids').split(/[\s,;]+/).filter(Boolean); config.guest_timeout = Number(form.get('guest_timeout')); }
     for (const key of ['timeout','workers','port_rate','port_workers']) config[key] = Number(form.get(key));
     for (const key of ['running_only','no_probes','verify_tls']) config[key] = form.has(key);
     if (mode === 'inventory') { const file = $('inventory-file').files[0]; if (!file) throw Error('Choose an inventory CSV.'); if (file.size > 1500000) throw Error('Inventory CSV must be smaller than 1.5 MB.'); config.inventory_csv = await file.text(); }

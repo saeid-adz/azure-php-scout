@@ -25,9 +25,10 @@ from .report import clean_text, csv_cell, write_html_report
 from .inventory import discover_azure
 from .discovery import WEB_PORTS, TLS_PORTS, discover_open_ports
 from .advisories import ASSESSMENT_FIELDS, enrich
+from . import __version__
 
 MAX_BODY = 300_000
-UA = "Azure-PHP-Scout/0.1.0"
+UA = "Azure-PHP-Scout/" + __version__
 REDIRECTS = {301, 302, 303, 307, 308}
 META_FIELDS = ["subscription", "resourceGroup", "vm", "os", "powerState", "vmId",
                "app", "state", "kind", "configuredRuntime", "configuredPhpVersion",

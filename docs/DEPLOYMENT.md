@@ -63,3 +63,11 @@ Graceful shutdown allows up to 15 seconds for active workers to stop before they
 are killed. A container supervisor should terminate all child processes on a hard
 stop. Interrupted jobs remain in history and are not automatically rerun. There
 is no automatic retry of a full estate scan after a service restart.
+
+Optional guest inspection needs the identity's Run Command action permission on
+explicitly selected VMs in addition to inventory read access. Scripts run as
+root/SYSTEM through a ready VM Agent, including on private VMs. Restrict those
+permissions to the intended VM scope and protect the service token accordingly.
+Stopping the service cannot cancel guest scripts already accepted by Azure.
+See [guest inspection](GUEST-INSPECTION.md) for permissions, output limits, and
+the distinction between installed and HTTP runtime evidence.

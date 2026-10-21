@@ -52,11 +52,11 @@ def az_json(arguments):
         raise RuntimeError("Azure CLI returned invalid JSON") from exc
 
 
-def graph_resources(subscriptions, runner=az_json):
+def graph_resources(subscriptions, runner=az_json, *, query=QUERY):
     """Use a deterministic order, explicit subscription scope and every continuation page."""
     records, token, seen = [], None, set()
     while True:
-        args = ["graph", "query", "-q", QUERY, "--first", "1000", "--subscriptions",
+        args = ["graph", "query", "-q", query, "--first", "1000", "--subscriptions",
                 *subscriptions, "--subscription", subscriptions[0]]
         if token:
             args.extend(["--skip-token", token])
@@ -127,7 +127,7 @@ def normalize_resources(records, subscriptions):
     return inventory
 
 
-def discover_azure(subscription_ids=None, runner=az_json, progress=None):
+def resource_records(query=QUERY, subscription_ids=None, runner=az_json, progress=None):
     subscriptions = runner(["account", "list", "--all"])
     subscriptions = [item for item in subscriptions if item.get("state") == "Enabled"]
     if subscription_ids:
@@ -148,9 +148,14 @@ def discover_azure(subscription_ids=None, runner=az_json, progress=None):
             if progress:
                 progress("Azure inventory: {} subscriptions in tenant {}".format(len(chunk), tenant))
             try:
-                records.extend(graph_resources(chunk, runner))
+                records.extend(graph_resources(chunk, runner, query=query))
             except RuntimeError as exc:
                 errors.append("Tenant {}, subscriptions {}: {}".format(tenant, ", ".join(chunk), exc))
+    return records, subscriptions, errors
+
+
+def discover_azure(subscription_ids=None, runner=az_json, progress=None):
+    records, subscriptions, errors = resource_records(QUERY, subscription_ids, runner, progress)
     inventory = normalize_resources(records, subscriptions)
     inventory.errors = errors
     if not records:

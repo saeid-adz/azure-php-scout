@@ -12,10 +12,24 @@ network path, and access controls at your ingress when hosting remotely. One
 service process owns a data directory; do not use multiple Uvicorn workers against
 one directory. The service uses an exclusive process lock.
 
-The scanner sends TCP connections and HTTP GETs. It never submits exploit payloads,
-executes fixes, or invokes VM Run Command. Use it on resources you administer or
+External scanning sends TCP connections and HTTP GETs. It never submits exploit
+payloads or executes fixes. Optional **guest inspection** invokes fixed Azure Run
+Command scripts as root/SYSTEM on explicitly selected VM IDs. The API does not
+accept custom guest scripts or arbitrary commands. The host identity must have
+the relevant Run Command action permission. Reader alone is insufficient.
+The service token can request these privileged checks using that host identity.
+Use it on resources you administer or
 have permission to assess. Azure discovery is read-only, but scans create network
 traffic and logs. Full-range scans can run for hours and are explicitly selected.
+Guest checks also create Azure Run Command extension/agent artifacts and logs.
+The bundled scripts do not install packages, change application configuration,
+or restart services. Installed package/file versions remain separate from HTTP
+runtime evidence. See [guest inspection](docs/GUEST-INSPECTION.md).
+
+Azure Action Run Command cannot cancel a submitted guest script. Local
+cancellation prevents further submissions and stops waiting, while an accepted
+remote command may continue. Reports retain this uncertainty and do not retry
+automatically. Missing or truncated output is not reported as PHP absence.
 
 Version-based findings do not establish exploitability, vendor patch status, or
 complete vulnerability coverage. The reviewed catalog covers two PHP core CVEs;

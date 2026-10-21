@@ -1,0 +1,132 @@
+# VM guest inspection
+
+Guest inspection uses Azure **Action Run Command** (`az vm run-command invoke`)
+on an explicit list of at most 50 VM resource IDs. It works with Windows and Linux
+VMs, including private VMs. It accepts regular `/virtualMachines/` resource IDs;
+VM scale-set child-instance resource IDs are not enumerated or accepted.
+Subscription filters in the UI affect browsing only; the selected VM IDs are the
+execution scope. An empty VM selection is rejected, and normal Azure/HTTP scans
+never implicitly submit guest commands.
+
+![Synthetic Windows and Linux guest findings](guest-inspection.png)
+
+The screenshot uses mocked Azure responses and synthetic VM resources.
+
+## What executes
+
+- Linux: [`inspect-linux.sh`](../src/azure_php_scout/scripts/inspect-linux.sh),
+  through `RunShellScript`, as root. It checks common PHP/FPM/CGI paths with
+  `timeout 3 ... -n -v`, skipping php.ini, then reads Debian/RPM core package
+  versions and PHP process names. Binary probes drop to the non-root `nobody`
+  account with cleared supplementary groups and `no-new-privs`; installed PHP
+  binaries are never executed as root. Probes are skipped if `timeout`, `setpriv`,
+  or a suitable non-root account is unavailable. No application code or diagnostic
+  PHP page is run.
+- Windows: [`inspect-windows.ps1`](../src/azure_php_scout/scripts/inspect-windows.ps1),
+  through `RunPowerShellScript`, as SYSTEM. It reads PHP executable version
+  metadata from common paths, running process executable paths, and IIS FastCGI
+  mappings. It does not execute PHP binaries or print application configuration.
+  UNC paths are skipped; PATH browsing is restricted to local drive paths.
+  Four-part file versions retain their fourth component as a `+file.N` build
+  suffix while comparing the PHP major/minor/patch numbers.
+
+The API accepts no custom script, command ID, or script parameter. Operators can
+review the exact scripts through the authenticated UI/API. Every successful
+inventory row records the script SHA-256. Azure credentials stay in the host CLI;
+the service token is removed from the Azure CLI worker environment.
+The worker submits a private snapshot of the bundled script and records that
+snapshot's hash, so editing/updating the source during an inspection does not
+change the recorded identity of an already submitted script.
+
+The scripts do not install software, update PHP, alter IIS/configuration, restart
+services, or read WordPress configuration/passwords. Run Command itself executes
+privileged code and creates its normal extension/agent artifacts and logs. Protect
+the service token accordingly: it can request these guest checks using the host
+identity's Azure permissions.
+
+## Permissions and prerequisites
+
+The host Azure CLI identity needs resource read access for VM browsing and these
+operations on the selected VMs:
+
+| Permission | Purpose |
+| --- | --- |
+| `Microsoft.Compute/virtualMachines/read` | Read the guest operating system. |
+| `Microsoft.Compute/virtualMachines/instanceView/read` | Verify VM power and agent readiness. |
+| `Microsoft.Compute/virtualMachines/runCommand/action` | Invoke Action Run Command. |
+| `Microsoft.Compute/locations/runCommands/read` | Read command definitions; provided by Reader at subscription scope. |
+
+Use Reader for inventory and a custom role granting `runCommand/action` on the
+specific VMs to be inspected. Virtual Machine Contributor also permits invocation
+but grants broader capabilities. The service does not assign roles automatically.
+The action endpoint used here is `/virtualMachines/{name}/runCommand`; this is
+separate from managed Run Command child resources and their `runCommands/write`
+permission.
+
+Each VM must be running with a ready Azure VM Agent. The worker verifies both
+before submitting the command. The agent needs outbound access to Azure endpoints
+on port 443 to return results. No inbound SSH/RDP or directly attached public IP
+is required. Stopped, unsupported, or unready VMs are recorded as skipped.
+
+See Microsoft's [Linux Run Command](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/run-command),
+[Windows Run Command](https://learn.microsoft.com/en-us/azure/virtual-machines/windows/run-command),
+[CLI invoke](https://learn.microsoft.com/en-us/cli/azure/vm/run-command#az-vm-run-command-invoke),
+and [Action Run Command REST API](https://learn.microsoft.com/en-us/rest/api/compute/virtual-machines/run-command)
+documentation. Both platforms use the fixed command ID appropriate to their OS.
+
+## Findings and coverage
+
+Guest rows use `evidenceSource=guest` and have no HTTP URL or port. The source,
+binary path or package, full vendor package version, process-presence signal,
+inspection status, and script hash appear in the evidence details and CSV export.
+Different PHP versions/installations are assessed independently. HTTP response
+counts remain zero for a guest-only scan. The dashboard/report instead shows VMs
+inspected and software evidence records.
+
+Package/file versions are disk inventory, not proof of the runtime loaded in a
+web worker. A process-presence signal does not map every installed version to an
+active web service. Updates can leave older workers loaded until restarted.
+Distribution/LTS packages can backport fixes under older upstream numbers. The
+existing version-based advisory and lifecycle uncertainty remains applicable.
+
+These checks are bounded, not an exhaustive filesystem or software inventory:
+
+- Linux: `/usr/sbin/php-fpm*`, `/usr/bin/php-cgi*`, `/usr/bin/php*`,
+  `/usr/local/bin/php`, `/usr/local/sbin/php-fpm`, common Remi/Plesk installations,
+  and `/usr/local/php*/bin/php`. Up to 8 binary candidates are checked and 16 core
+  package records considered. Binary probes require `timeout`, `setpriv`, and a
+  non-root `nobody` account, and must be readable/executable by that account.
+- Windows: PATH, PHP process paths, IIS FastCGI application mappings,
+  `C:\PHP*`, `C:\xampp\php`, `C:\wamp[64]\bin\php\php*`, and PHP under Program
+  Files. Up to 8 file candidates are inspected. Windows checks file metadata,
+  not the registry or the package manager.
+- Custom/container installations, Apache module-only installations, deleted or
+  replaced binaries loaded in memory, and WordPress/plugin inventories are not
+  exhaustively inspected. A missing version remains **unknown**, never proof
+  that PHP is absent or the machine is unaffected.
+
+Azure returns only the last 4,096 output bytes. Scripts use a compact framed
+protocol and an approximately 3,200-byte evidence budget. Base64 fields prevent
+paths/package data from breaking the record format. Missing frames, OS mismatch,
+malformed output, version-read failures, and output/candidate limits are reported
+as failed or incomplete checks instead of a successful absence finding.
+
+## Cancellation, timeouts, and retries
+
+VMs are checked sequentially, one request per selected VM, without automatic
+retries. Azure permits one Action Run Command per VM at a time and typically
+takes at least 20 seconds per invocation. Another command already in progress,
+missing permission, network errors, and agent failures are preserved per VM.
+
+`--guest-timeout` (default 180, range 60–1800 seconds) bounds how long the client
+waits for the action result. Metadata/preflight CLI requests have their separate
+180-second request timeout. This is not a remote execution timeout. Cancelling prevents further
+submissions and stops the local wait; it cannot cancel an Action Run Command
+already accepted by Azure. The report records `remoteMayContinue` when execution
+state is uncertain. Check Azure before retrying such a VM. Scripts are designed
+for inspection, but Azure's own Action Run Command limit can be up to 90 minutes.
+
+`guest --dry-run` reads selected VM metadata and prints the OS/command plan. It
+does not submit Run Command or create reports. Automated tests use mocked Azure
+responses and local/container fixtures; live guest execution requires an operator
+to choose the actual VM IDs and start that mode.

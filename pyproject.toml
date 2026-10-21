@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "azure-php-scout"
-version = "0.1.0"
+version = "0.2.0"
 description = "Find potentially affected PHP services across Azure VMs, App Services and Static Web Apps."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,7 +26,7 @@ Issues = "https://github.com/saeid-adz/azure-php-scout/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-azure_php_scout = ["report-template.html", "web/*", "data/*.json", "data/*.csv"]
+azure_php_scout = ["report-template.html", "web/*", "data/*.json", "data/*.csv", "scripts/*.sh", "scripts/*.ps1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

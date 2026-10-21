@@ -22,6 +22,8 @@ assessment in a self-hosted dashboard and CLI.
   and services whose runtime version needs verification.
 - Runs scans in a persistent, cancellable queue with live coverage, history,
   isolated artifacts, and offline HTML/CSV/JSON exports.
+- Optionally inspects PHP inside explicitly selected Windows/Linux VMs, including
+  private VMs, using fixed Azure Run Command scripts.
 
 The bundled catalog was reviewed on **21 October 2026** and tracks
 **CVE-2026-109618** and **CVE-2026-109619**. It is deliberately scoped to those two
@@ -136,6 +138,41 @@ Control work with `--workers`, `--timeout`, `--port-workers`, `--port-rate`, and
 `--port-timeout`. Pending HTTP work and TCP sockets are bounded. Redirects stay on
 the original connect address; new DNS hostnames change Host/SNI. Redirects to a
 different literal IP or an unselected port are recorded instead of followed.
+
+## Inspect PHP inside Windows and Linux VMs
+
+In **New scan**, select **VM guest inspection (Windows / Linux)**. Use **Find
+Windows and Linux VMs** to browse the selected subscriptions, then choose specific
+VMs or paste their complete resource IDs. Up to 50 VMs can be selected per run.
+You can review both bundled scripts in the dialog before starting the inspection.
+
+```sh
+# Preview a selected VM without submitting a guest command.
+azure-php-scout guest --vm-id /subscriptions/SUBSCRIPTION-ID/resourceGroups/MY-RG/providers/Microsoft.Compute/virtualMachines/MY-VM --dry-run
+
+# Inspect a selected VM; repeat --vm-id to include Windows and Linux VMs together.
+azure-php-scout guest --vm-id /subscriptions/SUBSCRIPTION-ID/resourceGroups/MY-RG/providers/Microsoft.Compute/virtualMachines/MY-VM -o guest-results.csv
+```
+
+This is a separate, opt-in execution mode. Azure Run Command executes the fixed
+inspection scripts as **root on Linux / SYSTEM on Windows**. The scripts do not
+install packages or change application configuration; Azure still creates Run
+Command agent/extension artifacts and logs. The identity needs Run Command
+permission in addition to read access; **Reader alone is insufficient**.
+
+Linux inspection checks common PHP/FPM/CGI binary paths, Debian/RPM core packages,
+and PHP process presence. Windows checks common PHP locations, running PHP process
+paths, and IIS FastCGI mappings, reading executable version metadata without
+executing `php.exe`. Guest evidence is labeled separately from HTTP evidence.
+Installed package/file versions do not prove which runtime is executing web
+requests, and vendor backports require verification.
+
+Private VMs need a running, ready Azure VM Agent and its outbound connectivity;
+they do not need a public IP, SSH, or RDP. VMs are inspected sequentially. Stopping
+a run prevents further submissions and stops waiting, but **cannot cancel a guest
+script already submitted to Azure**. Timeouts and incomplete output remain visible.
+See [guest inspection and permissions](docs/GUEST-INSPECTION.md) for limits,
+supported locations, and the exact authorization required.
 
 ## Docker
 

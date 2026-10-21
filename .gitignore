@@ -25,6 +25,7 @@ dist/
 /vms-public-ip.csv
 /webapps-php.csv
 /php-results.csv
+/guest-results.*
 /results/
 /reports/
 /data/

@@ -19,6 +19,7 @@ from . import __version__
 from .advisories import catalog
 from .inventory import az_json
 from .jobs import JobManager, summarize
+from .guest import list_vms, script_info, selected_vm_ids
 from .scanner import hostname, parse_ports
 
 
@@ -38,7 +39,7 @@ def service_token(root):
     else:
         token = secrets.token_urlsafe(32)
         with os.fdopen(descriptor, "w") as output:
-            output.write(token)
+            output.write(token + "\n")
     if len(token) < 32:
         raise RuntimeError("The saved service token is invalid. Replace it with a fresh token.")
     return token
@@ -46,7 +47,7 @@ def service_token(root):
 
 class ScanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    mode: Literal["azure", "targets", "inventory", "demo"] = "azure"
+    mode: Literal["azure", "targets", "inventory", "demo", "guest"] = "azure"
     name: str = Field(default="Azure discovery", min_length=1, max_length=100)
     subscriptions: list[str] = Field(default_factory=list, max_length=1000)
     targets: list[str] = Field(default_factory=list, max_length=256)
@@ -60,6 +61,13 @@ class ScanRequest(BaseModel):
     running_only: bool = False
     no_probes: bool = False
     verify_tls: bool = False
+    vm_ids: list[str] = Field(default_factory=list, max_length=50)
+    guest_timeout: int = Field(default=180, ge=60, le=1800)
+
+    @field_validator("vm_ids")
+    @classmethod
+    def virtual_machine_ids(cls, values):
+        return selected_vm_ids(values) if values else []
 
     @field_validator("subscriptions")
     @classmethod
@@ -82,6 +90,10 @@ class ScanRequest(BaseModel):
 
     @model_validator(mode="after")
     def source(self):
+        if self.mode == "guest" and not self.vm_ids:
+            raise ValueError("Select specific VM resource IDs for guest inspection")
+        if self.mode != "guest" and self.vm_ids:
+            raise ValueError("VM resource IDs are only used in guest inspection mode")
         if self.mode == "targets" and not self.targets:
             raise ValueError("Provide at least one target")
         if self.mode == "inventory":
@@ -176,9 +188,20 @@ def create_app(data_dir=None, token=None):
     def scans():
         return [public_job(value) for value in app.state.jobs.list()]
 
+    @app.get("/api/azure/vms", dependencies=auth)
+    def virtual_machines(subscription: list[UUID] = Query(default=[])):
+        try:
+            return list_vms([str(value) for value in subscription])
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+    @app.get("/api/guest/scripts/{os_name}", dependencies=auth)
+    def guest_script(os_name: Literal["Linux", "Windows"]):
+        return script_info(os_name)
+
     @app.post("/api/scans", status_code=202, dependencies=auth)
     def create_scan(config: ScanRequest):
-        if config.mode == "azure" and not shutil.which("az"):
+        if config.mode in ("azure", "guest") and not shutil.which("az"):
             raise HTTPException(503, "Install Azure CLI and run az login, or use an inventory CSV.")
         try:
             return public_job(app.state.jobs.create(config.model_dump()))

@@ -15,6 +15,9 @@ def main(argv=None):
     if argv and argv[0] == "scan":
         from .scanner import main as scan
         return scan(argv[1:])
+    if argv and argv[0] == "guest":
+        from .guest import main as inspect_guest
+        return inspect_guest(argv[1:])
     parser = argparse.ArgumentParser(prog="azure-php-scout", description="Discover Azure PHP exposure and review potential advisory impact.")
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -28,6 +31,7 @@ def main(argv=None):
     assess.add_argument("input")
     assess.add_argument("-o", "--output", default="assessed.csv")
     commands.add_parser("scan", help="discover and scan targets (run scan --help for options)")
+    commands.add_parser("guest", help="inspect PHP inside selected Windows/Linux VMs using Azure Run Command")
     args = parser.parse_args(argv)
     if args.command in ("serve", "token"):
         from .service import create_app, service_token
