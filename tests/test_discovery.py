@@ -101,13 +101,14 @@ class PortDiscoveryTests(unittest.TestCase):
             with socket.socket() as closed:
                 closed.bind(('127.0.0.1', 0))
                 closed_port = closed.getsockname()[1]
+            # Windows can take over a second to deliver a refused connection.
             updates = []
             found = list(discover_open_ports(['127.0.0.1'], [closed_port, server.server_port],
-                         workers=2, timeout=0.3, rate=1000, stop=threading.Event(), progress=updates.append))
+                         workers=2, timeout=5, rate=1000, stop=threading.Event(), progress=updates.append))
             self.assertEqual(found, [('127.0.0.1', server.server_port)])
             self.assertEqual(updates[-1]['checked'], 2)
             self.assertEqual(updates[-1]['open'], 1)
-            self.assertEqual(updates[-1]['closed'], 1)
+            self.assertEqual(updates[-1]['closed'], 1, updates[-1])
 
     def test_stop_does_not_begin_new_connections(self):
         stop = threading.Event()
