@@ -207,4 +207,3 @@ class AccountGuestTests(unittest.TestCase):
             self.assertEqual(len(plan['vms']), 3)
             self.assertTrue(plan['errors'])
             self.assertFalse(destination.exists())
-
