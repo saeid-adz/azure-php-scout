@@ -180,7 +180,8 @@ raise SystemExit(run_guest([], 'results.csv', all_subscriptions=True, runner=acc
         self.assertEqual(job['state'], 'partial', job)
         self.assertTrue(job['config']['guest_all_subscriptions'])
         self.assertEqual(job['coverage']['subscriptions'], 5)
-        self.assertEqual(job['summary']['guestChecked'], 2)
+        self.assertEqual(job['summary']['guestChecked'], 2,
+                         self.client.get('/api/scans/' + job['id'] + '/logs', headers=AUTH).json())
         self.assertEqual(job['summary']['guestVms'], 3)
         path = '/api/scans/' + job['id']
         html = self.client.get(path + '/export/html', headers=AUTH).text

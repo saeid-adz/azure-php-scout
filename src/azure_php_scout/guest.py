@@ -21,6 +21,7 @@ from uuid import UUID
 from .advisories import enrich, parse_version
 from .inventory import az_json, graph_resources, resource_records
 from .report import csv_cell, write_html_report
+from .snapshots import replace_snapshot
 
 GUEST_FIELDS = ["evidenceSource", "guestStatus", "guestSource", "guestPath", "guestPackage",
                 "guestPackageVersion", "guestProcessObserved", "guestCoverage", "guestScriptSha256"]
@@ -368,14 +369,14 @@ def save_results(destination, rows, scope):
             writer = csv.DictWriter(output, fieldnames=fields)
             writer.writeheader()
             writer.writerows({key: csv_cell(value) for key, value in row.items()} for row in rows)
-        temporary.replace(destination)
+        replace_snapshot(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
     coverage = destination.with_suffix(".coverage.json")
     temporary = coverage.with_name("." + coverage.name + ".tmp")
     try:
         temporary.write_text(json.dumps(scope, indent=2), encoding="utf-8")
-        temporary.replace(coverage)
+        replace_snapshot(temporary, coverage)
     finally:
         temporary.unlink(missing_ok=True)
     write_html_report(destination.with_suffix(".html"), rows, status=scope["scanStatus"], scope=scope)

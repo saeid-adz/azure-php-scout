@@ -7,6 +7,7 @@ from string import Template
 import tempfile
 from urllib.parse import urlsplit
 from .advisories import assess, enrich, catalog
+from .snapshots import replace_snapshot
 
 CONTROL_ESCAPES = {code: "\\x{:02x}".format(code) for code in range(32) if code not in (9, 10, 13)}
 RESOURCE_LABELS = {"vm": "Virtual machine", "appservice": "App Service", "staticwebapp": "Static Web App", "target": "Manual target"}
@@ -227,7 +228,7 @@ def write_html_report(path, rows, *, status="complete", expected=None, scope=Non
                                          prefix="." + path.name, suffix=".tmp", delete=False) as output:
             temporary_path = Path(output.name)
             output.write(html)
-        temporary_path.replace(path)
+        replace_snapshot(temporary_path, path)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)

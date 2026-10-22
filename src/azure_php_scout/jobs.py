@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import csv
 from datetime import datetime, timezone
 import ipaddress
+import io
 import json
 import os
 from pathlib import Path
@@ -135,8 +136,9 @@ class JobManager:
         if not path.exists():
             return []
         with path.open(newline="", encoding="utf-8-sig") as source:
-            return [enrich(row) for row in csv.DictReader(source)
-                    if row.get("target") and (row.get("port") or row.get("evidenceSource") == "guest") and row.get("php") is not None]
+            content = source.read()
+        return [enrich(row) for row in csv.DictReader(io.StringIO(content))
+                if row.get("target") and (row.get("port") or row.get("evidenceSource") == "guest") and row.get("php") is not None]
 
     def coverage(self, job_id):
         path = self.directory(job_id) / "results.coverage.json"
