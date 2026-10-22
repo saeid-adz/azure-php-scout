@@ -65,8 +65,8 @@ stop. Interrupted jobs remain in history and are not automatically rerun. There
 is no automatic retry of a full estate scan after a service restart.
 
 Optional guest inspection needs the identity's Run Command action permission on
-the VMs in the selected subscription or individually selected VMs, in addition to
-inventory read access. Grant Reader on the whole selected subscription for full
+the VMs across accessible subscriptions, one selected subscription, or individually
+selected VMs, in addition to inventory read access. Grant Reader on each scanned subscription for full
 VM discovery. Scripts run as
 root/SYSTEM through a ready VM Agent, including on private VMs. Restrict those
 permissions to the intended VM scope and protect the service token accordingly.

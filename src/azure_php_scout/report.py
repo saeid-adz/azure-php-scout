@@ -126,6 +126,17 @@ def coverage_html(scope):
     guest = scope.get("scanType") == "guest"
     if guest:
         info = scope.get("guest", {})
+        if info.get("scope") == "all_subscriptions":
+            items.append('<p><strong>Subscription scope:</strong> All accessible subscriptions discovered automatically from the host Azure CLI account · discovery {}</p>'.format(text(info.get("discoveryStatus"))))
+            subscriptions = info.get("subscriptionResults", [])
+            if subscriptions:
+                records = []
+                for subscription in subscriptions:
+                    records.append('<tr><td><strong>{}</strong><small>{}</small><small>Tenant {}</small></td><td>{}<small>{}</small></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>'.format(
+                        text(subscription.get("name")), text(subscription.get("id")), text(subscription.get("tenantId")),
+                        text(subscription.get("discoveryStatus")), text(subscription.get("error", "")),
+                        *(text(subscription.get(key, 0)) for key in ("requested", "checked", "failed", "skipped", "notSubmitted"))))
+                items.append('<details class="coverage-details" open><summary>Coverage by subscription ({} subscriptions)</summary><div class="table-wrap"><table aria-label="Subscription coverage"><thead><tr><th>Subscription</th><th>Discovery</th><th>VMs</th><th>Checked</th><th>Failed</th><th>Skipped</th><th>Not submitted</th></tr></thead><tbody>{}</tbody></table></div></details>'.format(len(subscriptions), "".join(records)))
         if info.get("scope") == "subscription":
             items.append('<p><strong>Subscription scope:</strong> {} ({}) · all VMs, public and private · discovery {}</p>'.format(
                 text(info.get("subscriptionName") or info.get("subscriptionId")), text(info.get("subscriptionId")),

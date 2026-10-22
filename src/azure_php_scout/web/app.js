@@ -59,8 +59,10 @@ async function loadSelected() {
   const summary = job.summary || {}, scope = job.coverage || {}, resources = scope.resources || {}, tcp = scope.tcp || {};
   const guest = job.config.mode === 'guest', guestScope = scope.guest || {};
   const requestedVms = guestScope.requested ?? job.config.vm_ids?.length ?? 0;
-  const subscriptionScope = Boolean(job.config.guest_subscription);
-  const discovering = guest && subscriptionScope && !['complete','failed'].includes(guestScope.discoveryStatus);
+  const allSubscriptions = Boolean(job.config.guest_all_subscriptions);
+  const subscriptionScope = Boolean(job.config.guest_subscription) || allSubscriptions;
+  const discovering = guest && subscriptionScope && runningStates.has(job.state) && !['complete','partial','failed','interrupted'].includes(guestScope.discoveryStatus);
+  const subscriptionResults = guestScope.subscriptionResults || [];
   $('coverage-scope-label').textContent = guest ? 'Inspection method' : 'VM port scope';
   $('coverage-progress-label').textContent = guest ? 'VM progress' : 'TCP discovery';
   $('stat-affected').textContent = summary.potentiallyAffected || 0; $('stat-eol').textContent = summary.endOfLife || 0; $('stat-verify').textContent = summary.verifyVersion || 0; $('stat-http').textContent = summary.responded || 0;
@@ -71,7 +73,7 @@ async function loadSelected() {
   $('cancel-scan').hidden = !runningStates.has(job.state); $('cancel-scan').disabled = job.state === 'cancelling';
   $('download-html').disabled = !summary.endpoints && scope.scanType !== 'guest'; $('download-csv').disabled = !summary.endpoints && scope.scanType !== 'guest';
   $('demo-notice').hidden = job.config.mode !== 'demo';
-  $('coverage-resources').textContent = guest ? (discovering ? 'Discovering all VMs' : requestedVms + ' VMs') + (subscriptionScope ? ' · subscription ' + (guestScope.subscriptionName || job.config.guest_subscription) : ' · selected resource IDs') : resources.vm !== undefined ? resources.vm + ' VMs · ' + (resources.appservice || 0) + ' apps · ' + (resources.staticwebapp || 0) + ' static apps' : scope.source || 'Inventory discovery in progress';
+  $('coverage-resources').textContent = guest ? (discovering ? 'Discovering all VMs' : requestedVms + ' VMs') + (allSubscriptions ? ' · ' + (scope.subscriptions || 0) + ' subscriptions · automatic account scope' : subscriptionScope ? ' · subscription ' + (guestScope.subscriptionName || job.config.guest_subscription) : ' · selected resource IDs') : resources.vm !== undefined ? resources.vm + ' VMs · ' + (resources.appservice || 0) + ' apps · ' + (resources.staticwebapp || 0) + ' static apps' : scope.source || 'Inventory discovery in progress';
   $('coverage-ports').textContent = guest ? 'Guest inspection · Azure Run Command' : scope.vmPortScope || (job.config.vm_ports === 'all' ? 'Full TCP range 1–65535' : job.config.vm_ports);
   $('coverage-tcp').textContent = guest ? (discovering ? 'Waiting for VM discovery' : (guestScope.completed || 0) + ' / ' + requestedVms + ' VMs processed') + ' · ' + (guestScope.failed || 0) + ' failed · ' + (guestScope.skipped || 0) + ' skipped · ' + (guestScope.notSubmitted || 0) + ' not submitted' : tcp.total ? tcp.checked.toLocaleString() + ' / ' + tcp.total.toLocaleString() + ' · ' + tcp.open + ' open' : job.config.mode === 'demo' ? 'Synthetic data' : 'Waiting for discovery';
   $('run-progress').hidden = !runningStates.has(job.state);
@@ -79,12 +81,14 @@ async function loadSelected() {
   $('progress-text').textContent = tcp.total ? tcp.open + ' open TCP ports · ' + (scope.httpChecked || 0) + ' HTTP checks completed' : job.state === 'queued' ? 'Queued behind the current scan' : 'Collecting inventory and HTTP evidence…';
   if (guest) {
     $('tcp-progress').value = guestScope.requested ? Math.round(100 * guestScope.completed / guestScope.requested) : 0;
-    $('progress-text').textContent = job.state === 'queued' ? 'Queued behind the current scan' : 'Inspecting selected VMs sequentially via the Azure VM Agent…';
+    $('progress-text').textContent = job.state === 'queued' ? 'Queued behind the current scan' : discovering ? 'Discovering subscriptions and VM inventory before command submission…' : 'Inspecting VMs sequentially via the Azure VM Agent…';
   }
-  const errors = [...(scope.errors || [])]; if (job.error && !errors.includes(job.error)) errors.push(job.error);
+  const errors = [...(scope.errors || [])]; if (job.error && !errors.includes(job.error) && job.error !== errors.join('; ')) errors.push(job.error);
   if (guest && (scope.remoteMayContinue || ['cancelling','cancelled'].includes(job.state))) errors.push('A guest script already submitted to Azure may still be running. Stopping this scan cannot cancel it; check Azure before retrying.');
   $('coverage-errors').replaceChildren(...errors.map(error => el('p', '', error))); $('coverage-errors').hidden = !errors.length;
   const skipped = scope.skipped || [];
+  $('coverage-subscriptions').hidden = !subscriptionResults.length;
+  $('coverage-subscriptions').replaceChildren(...subscriptionResults.map(info => el('p', '', info.name + ' · ' + info.id + ' · discovery ' + info.discoveryStatus + ' · ' + info.checked + ' / ' + info.requested + ' VMs checked · ' + info.failed + ' failed · ' + info.skipped + ' skipped · ' + info.notSubmitted + ' not submitted' + (info.error ? ' · ' + info.error : ''))));
   $('coverage-skipped').textContent = skipped.length ? skipped.length + (guest ? ' VMs were skipped during guest inspection.' : ' resources have no directly scannable public endpoint.') + ' See the HTML/JSON export for full coverage details.' : 'No skipped resources reported in the current snapshot.';
   await loadFindings();
 }
@@ -137,17 +141,18 @@ function showAdvisories() {
 async function createDemo() { try { const job = await api('/api/scans', {method:'POST', body:JSON.stringify({mode:'demo', name:'Community demo · synthetic resources'})}); state.selected = job.id; state.offset = 0; state.lastState = ''; await refresh(true); toast('Demo loaded. No network scan was started.'); } catch (error) { $('workspace-error').textContent = error.message; } }
 function updateSource() {
   const mode = $('source-mode').value, guest = mode === 'guest';
-  const allVms = $('guest-scope').value === 'subscription';
+  const scope = $('guest-scope').value, allVms = scope !== 'vms', allSubscriptions = scope === 'all_subscriptions';
   $('azure-fields').hidden = mode !== 'azure' && !(guest && !allVms); $('target-fields').hidden = mode !== 'targets'; $('inventory-fields').hidden = mode !== 'inventory';
   $('guest-fields').hidden = !guest; $('guest-vm-ids').required = guest && !allVms;
-  $('guest-subscription-fields').hidden = !allVms; $('guest-selected-fields').hidden = allVms;
-  $('guest-subscription').required = guest && allVms;
-  $('list-vms').textContent = allVms ? 'Preview all VMs in this subscription' : 'Find Windows and Linux VMs';
+  $('guest-subscription-fields').hidden = scope !== 'subscription'; $('guest-selected-fields').hidden = allVms;
+  $('guest-all-subscriptions-fields').hidden = !allSubscriptions;
+  $('guest-subscription').required = guest && scope === 'subscription';
+  $('list-vms').textContent = allSubscriptions ? 'Preview VMs across accessible subscriptions' : allVms ? 'Preview all VMs in this subscription' : 'Find Windows and Linux VMs';
   $('vm-list').hidden = true;
   $('port-profile-field').hidden = guest; $('port-hint').hidden = guest;
   $('custom-port-field').hidden = guest || $('port-profile').value !== 'custom';
   document.querySelector('.advanced').hidden = guest;
-  $('start-scan').textContent = guest ? allVms ? 'Inspect all VMs in subscription →' : 'Run guest inspection →' : 'Start discovery →';
+  $('start-scan').textContent = guest ? allSubscriptions ? 'Inspect VMs across all subscriptions →' : allVms ? 'Inspect all VMs in subscription →' : 'Run guest inspection →' : 'Start discovery →';
 }
 function updateProfile() { const value = $('port-profile').value; $('custom-port-field').hidden = value !== 'custom'; $('port-hint').textContent = value === 'all' ? 'Tests 65,535 TCP ports per public VM address. Large fleets can take hours. Managed application hostnames use ports 80 and 443.' : 'Open VM ports are checked for HTTP and HTTPS. App Services and Static Web Apps use hostname ports 80 and 443.'; }
 $('login-form').addEventListener('submit', async event => { event.preventDefault(); $('login-error').textContent = ''; const button = event.submitter || event.target.querySelector('button[type="submit"]'); button.disabled = true; try { await connect($('token').value.trim()); $('token').value = ''; } catch (error) { $('login-error').textContent = error.message; } finally { button.disabled = false; } });
@@ -183,12 +188,12 @@ for (const os of ['Linux','Windows']) $('review-' + os.toLowerCase()).addEventLi
 });
 $('list-vms').addEventListener('click', async () => {
   const list = $('vm-list'); list.hidden = false; list.textContent = 'Discovering VMs, including private Windows and Linux VMs…';
-  const params = new URLSearchParams(), allVms = $('guest-scope').value === 'subscription';
-  if (allVms) {
+  const params = new URLSearchParams(), scope = $('guest-scope').value, allVms = scope !== 'vms';
+  if (scope === 'subscription') {
     const subscription = $('guest-subscription').value.trim();
     if (!subscription) { list.textContent = 'Choose one subscription first.'; return; }
     params.append('subscription', subscription);
-  } else document.querySelector('[name=subscriptions]').value.split(/[\s,;]+/).filter(Boolean).forEach(value => params.append('subscription', value));
+  } else if (!allVms) document.querySelector('[name=subscriptions]').value.split(/[\s,;]+/).filter(Boolean).forEach(value => params.append('subscription', value));
   try {
     const data = await api('/api/azure/vms?' + params); list.replaceChildren(el('p', '', data.vms.length + (allVms ? ' VMs discovered. All will be included in the report; unavailable VMs will be skipped. Inventory is refreshed when the scan starts.' : ' VMs discovered. Select specific VMs to inspect.')));
     for (const error of data.errors) list.append(el('p', 'form-error', error));
@@ -212,10 +217,11 @@ $('scan-form').addEventListener('submit', async event => {
   event.preventDefault(); const form = new FormData(event.target); const button = $('start-scan'); button.disabled = true; $('scan-form-error').textContent = '';
   try {
     const mode = form.get('mode'), profile = form.get('profile');
-    const allVms = mode === 'guest' && form.get('guest_scope') === 'subscription';
+    const allVms = mode === 'guest' && form.get('guest_scope') !== 'vms';
     const config = {mode, name:form.get('name'), vm_ports:mode === 'guest' ? 'web' : profile === 'custom' ? form.get('custom_ports').trim() : profile, subscriptions:mode === 'azure' || (mode === 'guest' && !allVms) ? form.get('subscriptions').split(/[\s,;]+/).filter(Boolean) : [], targets:mode === 'targets' ? form.get('targets').split(/[\s,;]+/).filter(Boolean) : []};
     if (mode === 'guest') {
-      if (allVms) config.guest_subscription = form.get('guest_subscription').trim();
+      if (form.get('guest_scope') === 'all_subscriptions') config.guest_all_subscriptions = true;
+      else if (allVms) config.guest_subscription = form.get('guest_subscription').trim();
       else config.vm_ids = form.get('vm_ids').split(/[\s,;]+/).filter(Boolean);
       config.guest_timeout = Number(form.get('guest_timeout'));
     }

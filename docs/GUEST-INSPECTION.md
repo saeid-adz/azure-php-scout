@@ -1,12 +1,59 @@
 # VM guest inspection
 
 Guest inspection uses Azure **Action Run Command** (`az vm run-command invoke`)
-on all VMs in **one explicitly selected subscription**, or an explicit list of at
-most 50 VM resource IDs. It works with Windows and Linux VMs, including private
-VMs. Subscription scope has no 50-VM limit and never defaults to all subscriptions.
+on all VMs across **all accessible subscriptions**, one selected subscription, or
+an explicit list of at most 50 VM resource IDs. It works with Windows and Linux
+VMs, including private VMs. Subscription scopes have no 50-VM limit. Account-wide
+execution is explicitly selected; an empty scope never starts guest commands.
 It includes regular `/virtualMachines/` resources; VM scale-set child-instance
 resource IDs are not enumerated or accepted. Normal Azure/HTTP scans never
 implicitly submit guest commands.
+
+## Automatically inspect all accessible subscriptions
+
+Choose **VM guest inspection → All accessible subscriptions (automatic)** in the
+dashboard and start the inspection. Subscription IDs, VM IDs, and a preview are
+not required. The CLI equivalent is:
+
+```sh
+azure-php-scout guest --all-subscriptions --dry-run
+azure-php-scout guest --all-subscriptions -o account-php.csv
+```
+
+The worker calls `az account list --all --refresh` to discover current subscription
+access from the host's signed-in Azure CLI session. Enabled subscriptions are
+grouped by tenant and queried in batches of at most 100, with all VM continuation
+pages. There is no 1,000-subscription truncation. Duplicate account records are
+deduplicated. Disabled/non-enabled subscriptions remain in coverage as skipped.
+The scanner does not sign into additional accounts or grant Azure permissions.
+
+If a batch fails, inventory reads are retried per subscription to isolate failures.
+A subscription with incomplete, truncated, or denied inventory receives no guest
+commands; other successfully discovered subscriptions continue automatically.
+Guest commands themselves are never automatically retried. Run Command permission
+failures and unavailable agents are recorded per VM and do not abort the remaining
+VMs. The entire discovered fleet is processed sequentially and may take hours.
+
+One HTML/CSV/coverage JSON report contains all discovered VMs. The HTML includes
+a subscription table with names, IDs, tenants, discovery status, and VM counters,
+including empty, skipped, inaccessible, and cancelled subscriptions. A partial
+scan is not presented as complete coverage. Account refresh failure stops the run
+without submitting commands and still produces an explanatory report.
+
+The account needs read access to each subscription for full VM inventory and Run
+Command action permission on the VMs being inspected. Subscription visibility
+alone does not guarantee either permission. The accessible scope is the refreshed
+CLI session; tenants/accounts that require another login cannot be scanned until
+that authentication is available on the host.
+
+See Microsoft's [account list documentation](https://learn.microsoft.com/en-us/cli/azure/account#az-account-list)
+and [Resource Graph subscription-limit guidance](https://learn.microsoft.com/en-us/azure/governance/resource-graph/troubleshoot/general#scenario-too-many-subscriptions).
+
+![Synthetic account-wide guest inspection](account-inspection.png)
+
+This screenshot uses synthetic subscriptions and mocked Azure responses.
+
+## Inspect one subscription or selected VMs
 
 In the dashboard choose **VM guest inspection → All VMs in one subscription**,
 load the subscriptions and choose one ID. Previewing the inventory is optional;
@@ -31,7 +78,7 @@ the subscription ID/name, discovery status, and requested, checked, failed,
 skipped, and not-submitted counts. VMs are never started automatically.
 
 **Selected VM resource IDs** retains the existing 1–50 ID workflow. Its optional
-subscription filters affect browsing only. `--subscription` and `--vm-id` are
+subscription filters affect browsing only. `--all-subscriptions`, `--subscription`, and `--vm-id` are
 mutually exclusive execution scopes.
 
 ![Synthetic Windows and Linux guest findings](guest-inspection.png)

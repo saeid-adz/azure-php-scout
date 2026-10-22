@@ -161,6 +161,34 @@ raise SystemExit(run_guest([], 'results.csv', subscription=SUBSCRIPTION, runner=
         self.assertEqual(len(rows), 3)
         self.assertEqual({row['guestStatus'] for row in rows}, {'checked', 'skipped'})
 
+    def test_all_subscriptions_guest_worker_automates_discovery_and_combines_exports(self):
+        fixture = Path(self.directory.name) / 'account-fixture.py'
+        fixture.write_text('''import sys
+from azure_php_scout.guest import run_guest
+sys.path.insert(0, sys.argv[1])
+from test_guest_accounts import account_reader
+from test_guest import output
+def invoke(identifier, os, timeout, stop):
+    return output(os=os)
+raise SystemExit(run_guest([], 'results.csv', all_subscriptions=True, runner=account_reader, invoker=invoke))
+''', encoding='utf-8')
+        with patch('azure_php_scout.service.shutil.which', return_value='fixture-az'), patch.object(
+                JobManager, 'command', return_value=[sys.executable, str(fixture), str(Path(__file__).parent)]):
+            response = self.client.post('/api/scans', headers=AUTH, json=dict(mode='guest', guest_all_subscriptions=True))
+            self.assertEqual(response.status_code, 202)
+            job = self.wait(response.json()['id'])
+        self.assertEqual(job['state'], 'partial', job)
+        self.assertTrue(job['config']['guest_all_subscriptions'])
+        self.assertEqual(job['coverage']['subscriptions'], 5)
+        self.assertEqual(job['summary']['guestChecked'], 2)
+        self.assertEqual(job['summary']['guestVms'], 3)
+        path = '/api/scans/' + job['id']
+        html = self.client.get(path + '/export/html', headers=AUTH).text
+        self.assertIn('Coverage by subscription (5 subscriptions)', html)
+        self.assertIn('Synthetic denied subscription', html)
+        coverage = self.client.get(path + '/export/json', headers=AUTH).json()
+        self.assertEqual(len(coverage['guest']['subscriptionResults']), 5)
+
     def test_cancellation_preserves_a_terminal_job(self):
         created = self.client.post("/api/scans", headers=AUTH, json=dict(mode="demo", name="Cancelled demo")).json()
         job = self.wait(created["id"])

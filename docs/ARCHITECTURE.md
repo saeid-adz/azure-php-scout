@@ -23,7 +23,12 @@ allocate a future per port. `scanner.py` feeds a bounded HTTP queue from open TC
 connections. Managed hostnames are checked directly on HTTP/HTTPS ports.
 
 `guest.py` implements a separate opt-in workflow on explicit VM IDs or all VMs in
-one selected subscription. Subscription mode first resolves a paginated Resource
+one selected subscription, or every subscription available to the host account.
+Account mode refreshes the subscription list, deduplicates accounts, groups by
+tenant in batches of 100, and retries failed inventory batches per subscription.
+It records subscription coverage and continues successful scopes after discovery
+or Run Command failures elsewhere. Non-enabled subscriptions remain as skipped.
+Single-subscription mode first resolves a paginated Resource
 Graph inventory, including private and stopped VMs, and rejects incomplete discovery
 before executing commands. Each job keeps one combined report and a coverage
 snapshot, including skipped, failed, and cancelled/unsubmitted resources. It checks

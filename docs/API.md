@@ -48,14 +48,16 @@ Subscription IDs must be UUIDs. At most 256 direct targets, 1.5 MB inventory tex
 64 HTTP workers, 1,024 TCP sockets, and 5,000 new TCP connections/second are allowed.
 The queue admits up to eight pending/running runs. One run executes at a time.
 
-Guest mode requires exactly one execution scope: `guest_subscription`, one UUID
-to discover and inspect every VM in that subscription (no 50-VM limit), or
-`vm_ids`, an explicit array of 1–50 full VM resource IDs. Empty or mixed scopes
-are rejected; `guest_subscription` accepts one UUID, not a list. `subscriptions` is only a browsing
-filter in the individual-ID workflow and must be empty with `guest_subscription`.
-Both guest fields are rejected in other modes. The worker resolves every inventory
-page before executing commands; discovery errors prevent all submissions and are
-saved in the report. `guest_timeout` is 60–1800 seconds (default 180). No caller-supplied
+Guest mode requires exactly one execution scope: `guest_all_subscriptions=true`
+to automatically refresh and inspect all subscriptions visible to the host CLI,
+`guest_subscription` with one UUID, or `vm_ids` with 1–50 full VM resource IDs.
+Subscription scopes have no 50-VM limit. Empty/mixed scopes are rejected.
+`subscriptions` is only a browsing filter in the individual-ID workflow and must
+be empty with either subscription execution scope. Guest fields are rejected in
+other modes. The worker resolves inventory before executing commands. Failed or
+incomplete discovery prevents submission in the affected subscriptions; account-wide
+mode continues with successful subscriptions. Non-enabled subscriptions are recorded
+as skipped. `guest_timeout` is 60–1800 seconds (default 180). No caller-supplied
 script or command is accepted. The guest
 worker checks that the VM is running with a ready agent before submission and
 selects the fixed OS-specific script. Guest commands run sequentially.
@@ -65,6 +67,17 @@ selects the fixed OS-specific script. Guest commands run sequentially.
   "mode": "guest",
   "name": "Subscription PHP inventory",
   "guest_subscription": "00000000-0000-0000-0000-000000000001",
+  "guest_timeout": 180
+}
+```
+
+Or discover all accessible subscriptions automatically, without providing IDs:
+
+```json
+{
+  "mode": "guest",
+  "name": "Account PHP inventory",
+  "guest_all_subscriptions": true,
   "guest_timeout": 180
 }
 ```
@@ -86,10 +99,16 @@ Guest rows include `evidenceSource=guest`, `guestStatus`, `guestSource`,
 Summary fields `guestVms` and `guestChecked` count unique VMs separately from
 software records and HTTP response counts. Coverage has `scanType=guest`,
 `guest` progress counters, and `remoteMayContinue` for uncertain remote execution.
-`guest.scope` is `subscription` or `vms`; subscription scope adds `subscriptionId`,
+`guest.scope` is `all_subscriptions`, `subscription`, or `vms`; single-subscription scope adds `subscriptionId`,
 `subscriptionName` (when VMs were found), and `discoveryStatus`. `guest.notSubmitted`
 counts VMs left after cancellation; their rows use `guestStatus=not_submitted`.
 Stopped/unready VMs have `guestStatus=skipped` and remain in the same report.
+Account-wide coverage adds `guest.subscriptionResults`: each record includes
+`id`, `name`, `tenantId`, `state`, `discoveryStatus`, optional `error`, and the
+`requested`, `checked`, `completed`, `failed`, `skipped`, `notSubmitted` VM counters.
+Discovery statuses include `pending`, `complete`, `failed`, `skipped`, and
+`not_submitted`; the overall discovery status can also be `running`, `partial`, or
+`interrupted`. Empty and inaccessible subscriptions remain in this list.
 
 Results accept `offset` (default 0), `limit` (1–500, default 100), `q`,
 `resource_type`, and `assessment`. They are sorted by risk priority, then target.

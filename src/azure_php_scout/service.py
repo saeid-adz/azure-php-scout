@@ -63,6 +63,7 @@ class ScanRequest(BaseModel):
     verify_tls: bool = False
     vm_ids: list[str] = Field(default_factory=list, max_length=50)
     guest_subscription: str | None = None
+    guest_all_subscriptions: bool = False
     guest_timeout: int = Field(default=180, ge=60, le=1800)
 
     @field_validator("guest_subscription")
@@ -96,11 +97,11 @@ class ScanRequest(BaseModel):
 
     @model_validator(mode="after")
     def source(self):
-        if self.mode == "guest" and bool(self.vm_ids) == bool(self.guest_subscription):
-            raise ValueError("Choose one guest subscription UUID or specific VM resource IDs")
-        if self.mode == "guest" and self.guest_subscription and self.subscriptions:
-            raise ValueError("Use guest_subscription alone for subscription-wide guest inspection")
-        if self.mode != "guest" and (self.vm_ids or self.guest_subscription):
+        if self.mode == "guest" and sum((bool(self.vm_ids), bool(self.guest_subscription), self.guest_all_subscriptions)) != 1:
+            raise ValueError("Choose all accessible subscriptions, one guest subscription UUID, or specific VM resource IDs")
+        if self.mode == "guest" and (self.guest_subscription or self.guest_all_subscriptions) and self.subscriptions:
+            raise ValueError("Guest subscription scopes cannot be combined with subscription browsing filters")
+        if self.mode != "guest" and (self.vm_ids or self.guest_subscription or self.guest_all_subscriptions):
             raise ValueError("Guest subscription and VM resource IDs are only used in guest inspection mode")
         if self.mode == "targets" and not self.targets:
             raise ValueError("Provide at least one target")

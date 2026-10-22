@@ -2,6 +2,7 @@
 import argparse
 import base64
 import binascii
+from collections import defaultdict
 import csv
 import hashlib
 from importlib.resources import files
@@ -18,7 +19,7 @@ import time
 from uuid import UUID
 
 from .advisories import enrich, parse_version
-from .inventory import az_json, resource_records
+from .inventory import az_json, graph_resources, resource_records
 from .report import csv_cell, write_html_report
 
 GUEST_FIELDS = ["evidenceSource", "guestStatus", "guestSource", "guestPath", "guestPackage",
@@ -73,6 +74,83 @@ def subscription_vms(subscription, runner=az_json):
             raise ValueError("VM discovery returned a resource outside the selected subscription; no commands submitted")
         machines[identifier.casefold()] = dict(machine, resourceId=identifier)
     return list(machines.values())
+
+
+def all_subscription_vms(*, runner=az_json, stop=None, progress=None, updated=None):
+    """Refresh account scope, batch by tenant, and isolate failed subscription reads."""
+    stop = stop or threading.Event()
+    accounts = runner(["account", "list", "--all", "--refresh"])
+    if not isinstance(accounts, list) or not accounts:
+        raise RuntimeError("No Azure subscriptions visible. Run az login on the service host.")
+    subscriptions = {}
+    for account in accounts:
+        if not isinstance(account, dict) or not account.get("id"):
+            raise ValueError("Azure CLI returned an invalid subscription record; no commands submitted")
+        identifier = str(UUID(account["id"]))
+        subscriptions.setdefault(identifier, dict(id=identifier, name=account.get("name") or identifier,
+            tenantId=account.get("tenantId") or "", state=account.get("state") or "Unknown",
+            discoveryStatus="pending", requested=0, checked=0, failed=0, skipped=0, completed=0, notSubmitted=0))
+    result = dict(vms=[], subscriptions=list(subscriptions.values()), errors=[], discoveryStatus="running")
+    groups = defaultdict(list)
+    for info in subscriptions.values():
+        if info["state"].lower() == "enabled":
+            groups[info["tenantId"]].append(info["id"])
+        else:
+            info.update(discoveryStatus="skipped", error="Subscription state is {}; no guest commands submitted.".format(info["state"]))
+            result["errors"].append("{} ({}): {}".format(info["name"], info["id"], info["error"]))
+
+    def snapshot():
+        if updated:
+            updated(result)
+
+    def discover(ids):
+        if stop.is_set():
+            return
+        if progress:
+            progress("Discovering VMs in {} subscription(s), tenant {}.".format(len(ids), subscriptions[ids[0]]["tenantId"]))
+        try:
+            records = graph_resources(ids, runner, query=VM_QUERY)
+            machines = {}
+            for record in records:
+                identifier = vm_id(record["id"])
+                subscription = identifier.split("/")[2]
+                if subscription not in ids:
+                    raise ValueError("VM discovery returned a resource outside the requested subscriptions")
+                machines[identifier.casefold()] = dict(resourceId=identifier, vm=record.get("name") or identifier.split("/")[-1],
+                    os=record.get("os") or "Unknown", resourceGroup=record.get("resourceGroup") or identifier.split("/")[4],
+                    subscriptionId=subscription, subscription=subscriptions[subscription]["name"],
+                    powerState=record.get("powerState") or "unknown")
+        except (RuntimeError, ValueError, OSError, KeyError, TypeError) as exc:
+            if len(ids) > 1:
+                # Retry inventory reads individually; never retry guest execution.
+                for identifier in ids:
+                    discover([identifier])
+                return
+            info = subscriptions[ids[0]]
+            info.update(discoveryStatus="failed", error=str(exc)[:1000])
+            result["errors"].append("{} ({}): VM discovery failed; no commands submitted in this subscription. {}".format(
+                info["name"], info["id"], info["error"]))
+        else:
+            result["vms"].extend(machines.values())
+            for identifier in ids:
+                subscriptions[identifier].update(discoveryStatus="complete",
+                    requested=sum(item["subscriptionId"] == identifier for item in machines.values()))
+        snapshot()
+
+    snapshot()
+    for ids in groups.values():
+        for offset in range(0, len(ids), 100):
+            discover(ids[offset:offset + 100])
+    if stop.is_set():
+        for info in subscriptions.values():
+            if info["discoveryStatus"] == "pending":
+                info.update(discoveryStatus="not_submitted", error="Scan stopped before subscription discovery.")
+        result["errors"].append("Scan stopped before guest command submission; subscription discovery may be incomplete.")
+        result["discoveryStatus"] = "interrupted"
+    else:
+        result["discoveryStatus"] = "partial" if result["errors"] else "complete"
+    snapshot()
+    return result
 
 
 def script_info(os_name):
@@ -303,25 +381,51 @@ def save_results(destination, rows, scope):
     write_html_report(destination.with_suffix(".html"), rows, status=scope["scanStatus"], scope=scope)
 
 
-def run_guest(vm_ids, destination, *, subscription=None, timeout=180, stop=None, runner=az_json, invoker=invoke, progress=None):
+def run_guest(vm_ids, destination, *, subscription=None, all_subscriptions=False, timeout=180, stop=None, runner=az_json, invoker=invoke, progress=None):
+    if all_subscriptions and (subscription is not None or vm_ids):
+        raise ValueError("Choose all subscriptions, one subscription, or specific VM IDs")
     if subscription is not None:
         subscription = str(UUID(subscription))
         if vm_ids:
             raise ValueError("Choose one subscription or specific VM IDs, not both")
         vm_ids = []
-    else:
+    elif not all_subscriptions:
         vm_ids = selected_vm_ids(vm_ids)
+    else:
+        vm_ids = []
     stop = stop or threading.Event()
     rows = []
     scope = dict(scanType="guest", source="Azure VM Run Command", resources=dict(vm=len(vm_ids)),
                  subscriptions=1 if subscription else len({item.split('/')[2] for item in vm_ids}), errors=[], skipped=[],
                  scanStatus="running", remoteMayContinue=False,
-                 guest=dict(scope="subscription" if subscription else "vms", subscriptionId=subscription,
-                            discoveryStatus="pending" if subscription else "not_required",
+                 guest=dict(scope="all_subscriptions" if all_subscriptions else "subscription" if subscription else "vms", subscriptionId=subscription,
+                            discoveryStatus="pending" if subscription or all_subscriptions else "not_required",
                             requested=len(vm_ids), checked=0, failed=0, skipped=0, completed=0, notSubmitted=0))
     save_results(destination, rows, scope)
     machines = {}
-    if subscription:
+    subscription_results = {}
+    if all_subscriptions:
+        if progress:
+            progress("Refreshing all subscriptions available to the signed-in Azure CLI account.")
+        def snapshot(inventory):
+            scope["subscriptions"] = len(inventory["subscriptions"])
+            scope["guest"].update(subscriptionResults=inventory["subscriptions"], discoveryStatus=inventory["discoveryStatus"],
+                                  requested=len(inventory["vms"]))
+            scope["resources"]["vm"] = len(inventory["vms"])
+            scope["errors"] = list(inventory["errors"])
+            save_results(destination, rows, scope)
+        try:
+            inventory = all_subscription_vms(runner=runner, stop=stop, progress=progress, updated=snapshot)
+            machines = {item["resourceId"].casefold(): item for item in inventory["vms"]}
+            vm_ids = [item["resourceId"] for item in inventory["vms"]]
+            subscription_results = {item["id"]: item for item in inventory["subscriptions"]}
+        except (RuntimeError, ValueError, OSError, KeyError, TypeError) as exc:
+            scope["guest"]["discoveryStatus"] = "failed"
+            scope["errors"].append(str(exc)[:2000])
+            scope["scanStatus"] = "interrupted" if stop.is_set() else "failed"
+            save_results(destination, rows, scope)
+            return 130 if stop.is_set() else 1
+    elif subscription:
         if progress:
             progress("Discovering all VMs in subscription {} (public and private).".format(subscription))
         try:
@@ -347,6 +451,8 @@ def run_guest(vm_ids, destination, *, subscription=None, timeout=180, stop=None,
             rows.append(enrich(dict(base_row(resource_id, machines.get(resource_id.casefold())),
                                     guestStatus="not_submitted", note="Inspection stopped before this VM was submitted.")))
             scope["guest"]["notSubmitted"] += 1
+            if resource_id.split("/")[2] in subscription_results:
+                subscription_results[resource_id.split("/")[2]]["notSubmitted"] += 1
             continue
         scope["guest"]["currentVm"] = resource_id
         if progress:
@@ -366,6 +472,12 @@ def run_guest(vm_ids, destination, *, subscription=None, timeout=180, stop=None,
         scope["guest"]["checked"] += state in ("checked", "incomplete")
         scope["guest"]["skipped"] += state == "skipped"
         scope["guest"]["failed"] += state not in ("checked", "incomplete", "skipped")
+        info = subscription_results.get(resource_id.split("/")[2])
+        if info is not None:
+            info["completed"] += 1
+            info["checked"] += state in ("checked", "incomplete")
+            info["skipped"] += state == "skipped"
+            info["failed"] += state not in ("checked", "incomplete", "skipped")
         scope["remoteMayContinue"] |= remote
         if state != "checked":
             scope["errors"].append("{}: {}".format(resource_id, findings[0].get("note") or findings[0].get("guestCoverage") or state))
@@ -385,6 +497,7 @@ def main(argv=None):
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--vm-id", action="append", help="complete VM resource ID; repeat for up to 50 selected VMs")
     selection.add_argument("--subscription", help="inspect every VM in this one subscription UUID, with or without a public IP")
+    selection.add_argument("--all-subscriptions", action="store_true", help="automatically discover all subscriptions available to Azure CLI and inspect their Windows/Linux VMs")
     parser.add_argument("--guest-timeout", type=int, default=180, help="seconds to wait per VM (60–1800); remote scripts cannot be cancelled")
     parser.add_argument("--dry-run", action="store_true", help="read selected VM metadata and print the plan without executing guest commands")
     parser.add_argument("-o", "--output", default="guest-results.csv")
@@ -399,6 +512,12 @@ def main(argv=None):
             raise ValueError("Guest output must use a .csv filename")
         if args.dry_run:
             plan = []
+            if args.all_subscriptions:
+                inventory = all_subscription_vms(runner=az_json)
+                for vm in inventory["vms"]:
+                    plan.append(dict(resourceId=vm["resourceId"], os=vm["os"], commandId=COMMANDS.get(vm["os"], ("unsupported",))[0]))
+                print(json.dumps(dict(subscriptions=inventory["subscriptions"], errors=inventory["errors"], vms=plan), indent=2))
+                return 1 if inventory["errors"] else 0
             if subscription:
                 ids = [item["resourceId"] for item in subscription_vms(subscription, runner=az_json)]
             for resource_id in ids:
@@ -412,7 +531,7 @@ def main(argv=None):
         for sig in (signal.SIGINT, signal.SIGTERM):
             previous[sig] = signal.signal(sig, lambda *_args: stop.set())
         try:
-            return run_guest(ids, destination, subscription=subscription, timeout=args.guest_timeout, stop=stop,
+            return run_guest(ids, destination, subscription=subscription, all_subscriptions=args.all_subscriptions, timeout=args.guest_timeout, stop=stop,
                              progress=lambda message: print(message, file=sys.stderr, flush=True))
         finally:
             for sig, handler in previous.items():

@@ -22,7 +22,8 @@ assessment in a self-hosted dashboard and CLI.
   and services whose runtime version needs verification.
 - Runs scans in a persistent, cancellable queue with live coverage, history,
   isolated artifacts, and offline HTML/CSV/JSON exports.
-- Optionally inspects PHP inside all VMs in one selected subscription or specific Windows/Linux VMs, including
+- Optionally inspects PHP inside Windows/Linux VMs across all accessible
+  subscriptions, one selected subscription, or specific VMs, including
   private VMs, using fixed Azure Run Command scripts.
 
 The bundled catalog was reviewed on **21 October 2026** and tracks
@@ -141,17 +142,29 @@ different literal IP or an unselected port are recorded instead of followed.
 
 ## Inspect PHP inside Windows and Linux VMs
 
-In **New scan**, select **VM guest inspection (Windows / Linux)**, then **All VMs
-in one subscription**. Load available subscriptions and choose one, or paste its
-subscription ID. No individual VM IDs are needed. All discovered VMs are included,
-with or without public IPs, with no 50-VM limit. The combined HTML report includes
-findings and skipped/failed VMs. You can preview the VM inventory and review both
-bundled scripts before starting.
+In **New scan**, select **VM guest inspection (Windows / Linux)**, then **All
+accessible subscriptions (automatic)**. Start the inspection without entering
+subscription or VM IDs. The service refreshes the host Azure CLI account's
+subscriptions, discovers VMs across tenants, and runs the fixed inspection scripts.
+Windows and Linux VMs with or without public IPs are included, with no 50-VM limit.
+One HTML report combines findings and coverage by subscription, including empty,
+disabled, inaccessible, and partially inspected subscriptions. A failure in one
+subscription or VM does not stop the rest.
+
+You can also choose **All VMs in one subscription** and select or paste one
+subscription ID. Previewing the VM inventory and reviewing both bundled scripts
+is optional; neither step is required to start an automated scan.
 
 For a smaller scope, choose **Selected VM resource IDs** and browse or paste up to
 50 IDs. Normal external scans never submit guest commands automatically.
 
 ```sh
+# Automatically discover and inspect all accessible subscriptions; create one report.
+azure-php-scout guest --all-subscriptions -o account-php.csv
+
+# Preview subscription coverage and the command plan without executing guest scripts.
+azure-php-scout guest --all-subscriptions --dry-run
+
 # Discover all VMs in one subscription and preview the command plan.
 azure-php-scout guest --subscription SUBSCRIPTION-ID --dry-run
 
