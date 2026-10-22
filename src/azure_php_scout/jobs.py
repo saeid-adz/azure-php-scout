@@ -151,8 +151,11 @@ class JobManager:
         if config["mode"] == "guest":
             args = [sys.executable, "-m", "azure_php_scout", "guest", "-o", str(folder / "results.csv"),
                     "--guest-timeout", str(config["guest_timeout"])]
-            for resource_id in config["vm_ids"]:
-                args.extend(["--vm-id", resource_id])
+            if config.get("guest_subscription"):
+                args.extend(["--subscription", config["guest_subscription"]])
+            else:
+                for resource_id in config["vm_ids"]:
+                    args.extend(["--vm-id", resource_id])
             return args
         args = [sys.executable, "-m", "azure_php_scout", "scan", "-o", str(folder / "results.csv")]
         if config["mode"] == "azure":

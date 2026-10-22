@@ -22,7 +22,7 @@ assessment in a self-hosted dashboard and CLI.
   and services whose runtime version needs verification.
 - Runs scans in a persistent, cancellable queue with live coverage, history,
   isolated artifacts, and offline HTML/CSV/JSON exports.
-- Optionally inspects PHP inside explicitly selected Windows/Linux VMs, including
+- Optionally inspects PHP inside all VMs in one selected subscription or specific Windows/Linux VMs, including
   private VMs, using fixed Azure Run Command scripts.
 
 The bundled catalog was reviewed on **21 October 2026** and tracks
@@ -141,12 +141,23 @@ different literal IP or an unselected port are recorded instead of followed.
 
 ## Inspect PHP inside Windows and Linux VMs
 
-In **New scan**, select **VM guest inspection (Windows / Linux)**. Use **Find
-Windows and Linux VMs** to browse the selected subscriptions, then choose specific
-VMs or paste their complete resource IDs. Up to 50 VMs can be selected per run.
-You can review both bundled scripts in the dialog before starting the inspection.
+In **New scan**, select **VM guest inspection (Windows / Linux)**, then **All VMs
+in one subscription**. Load available subscriptions and choose one, or paste its
+subscription ID. No individual VM IDs are needed. All discovered VMs are included,
+with or without public IPs, with no 50-VM limit. The combined HTML report includes
+findings and skipped/failed VMs. You can preview the VM inventory and review both
+bundled scripts before starting.
+
+For a smaller scope, choose **Selected VM resource IDs** and browse or paste up to
+50 IDs. Normal external scans never submit guest commands automatically.
 
 ```sh
+# Discover all VMs in one subscription and preview the command plan.
+azure-php-scout guest --subscription SUBSCRIPTION-ID --dry-run
+
+# Inspect the subscription and create subscription-php.html, .csv and .coverage.json.
+azure-php-scout guest --subscription SUBSCRIPTION-ID -o subscription-php.csv
+
 # Preview a selected VM without submitting a guest command.
 azure-php-scout guest --vm-id /subscriptions/SUBSCRIPTION-ID/resourceGroups/MY-RG/providers/Microsoft.Compute/virtualMachines/MY-VM --dry-run
 

@@ -22,7 +22,11 @@ flowchart LR
 allocate a future per port. `scanner.py` feeds a bounded HTTP queue from open TCP
 connections. Managed hostnames are checked directly on HTTP/HTTPS ports.
 
-`guest.py` implements a separate opt-in workflow on explicit VM IDs. It checks
+`guest.py` implements a separate opt-in workflow on explicit VM IDs or all VMs in
+one selected subscription. Subscription mode first resolves a paginated Resource
+Graph inventory, including private and stopped VMs, and rejects incomplete discovery
+before executing commands. Each job keeps one combined report and a coverage
+snapshot, including skipped, failed, and cancelled/unsubmitted resources. It checks
 power/agent readiness, then submits a fixed packaged Linux/Windows script using
 the target subscription. Results use a bounded framed output protocol, preserve
 per-VM failures and remote cancellation uncertainty, and label package/disk

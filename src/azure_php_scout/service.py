@@ -62,7 +62,13 @@ class ScanRequest(BaseModel):
     no_probes: bool = False
     verify_tls: bool = False
     vm_ids: list[str] = Field(default_factory=list, max_length=50)
+    guest_subscription: str | None = None
     guest_timeout: int = Field(default=180, ge=60, le=1800)
+
+    @field_validator("guest_subscription")
+    @classmethod
+    def guest_subscription_id(cls, value):
+        return str(UUID(value)) if value is not None else None
 
     @field_validator("vm_ids")
     @classmethod
@@ -90,10 +96,12 @@ class ScanRequest(BaseModel):
 
     @model_validator(mode="after")
     def source(self):
-        if self.mode == "guest" and not self.vm_ids:
-            raise ValueError("Select specific VM resource IDs for guest inspection")
-        if self.mode != "guest" and self.vm_ids:
-            raise ValueError("VM resource IDs are only used in guest inspection mode")
+        if self.mode == "guest" and bool(self.vm_ids) == bool(self.guest_subscription):
+            raise ValueError("Choose one guest subscription UUID or specific VM resource IDs")
+        if self.mode == "guest" and self.guest_subscription and self.subscriptions:
+            raise ValueError("Use guest_subscription alone for subscription-wide guest inspection")
+        if self.mode != "guest" and (self.vm_ids or self.guest_subscription):
+            raise ValueError("Guest subscription and VM resource IDs are only used in guest inspection mode")
         if self.mode == "targets" and not self.targets:
             raise ValueError("Provide at least one target")
         if self.mode == "inventory":

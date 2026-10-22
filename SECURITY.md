@@ -14,7 +14,10 @@ one directory. The service uses an exclusive process lock.
 
 External scanning sends TCP connections and HTTP GETs. It never submits exploit
 payloads or executes fixes. Optional **guest inspection** invokes fixed Azure Run
-Command scripts as root/SYSTEM on explicitly selected VM IDs. The API does not
+Command scripts as root/SYSTEM on all VMs in one explicitly selected subscription
+or on specific VM IDs. Subscription-wide execution includes private VMs and has
+no 50-VM limit. It requires a single explicit UUID; it never defaults to every
+visible subscription. Incomplete discovery prevents submissions. The API does not
 accept custom guest scripts or arbitrary commands. The host identity must have
 the relevant Run Command action permission. Reader alone is insufficient.
 The service token can request these privileged checks using that host identity.

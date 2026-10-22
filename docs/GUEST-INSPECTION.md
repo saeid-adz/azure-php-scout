@@ -1,12 +1,38 @@
 # VM guest inspection
 
 Guest inspection uses Azure **Action Run Command** (`az vm run-command invoke`)
-on an explicit list of at most 50 VM resource IDs. It works with Windows and Linux
-VMs, including private VMs. It accepts regular `/virtualMachines/` resource IDs;
-VM scale-set child-instance resource IDs are not enumerated or accepted.
-Subscription filters in the UI affect browsing only; the selected VM IDs are the
-execution scope. An empty VM selection is rejected, and normal Azure/HTTP scans
-never implicitly submit guest commands.
+on all VMs in **one explicitly selected subscription**, or an explicit list of at
+most 50 VM resource IDs. It works with Windows and Linux VMs, including private
+VMs. Subscription scope has no 50-VM limit and never defaults to all subscriptions.
+It includes regular `/virtualMachines/` resources; VM scale-set child-instance
+resource IDs are not enumerated or accepted. Normal Azure/HTTP scans never
+implicitly submit guest commands.
+
+In the dashboard choose **VM guest inspection → All VMs in one subscription**,
+load the subscriptions and choose one ID. Previewing the inventory is optional;
+the worker discovers a fresh inventory when the job starts. The CLI equivalent is:
+
+```sh
+azure-php-scout guest --subscription SUBSCRIPTION-ID --dry-run
+azure-php-scout guest --subscription SUBSCRIPTION-ID -o subscription-php.csv
+```
+
+Discovery uses Azure Resource Graph with an explicit subscription scope and all
+continuation pages, without a public-IP filter. It completes before any guest
+command is submitted. Incomplete, truncated, or failed discovery prevents execution
+and produces an HTML/CSV/coverage report explaining the failure. An empty
+subscription produces an empty report. The inventory is a snapshot of resources
+visible to the host identity; grant Reader over the subscription for full coverage.
+Resources created after discovery are picked up by a later scan.
+
+All discovered VMs stay in the combined report, including stopped/unready VMs,
+permission failures, and VMs not submitted after cancellation. The report records
+the subscription ID/name, discovery status, and requested, checked, failed,
+skipped, and not-submitted counts. VMs are never started automatically.
+
+**Selected VM resource IDs** retains the existing 1–50 ID workflow. Its optional
+subscription filters affect browsing only. `--subscription` and `--vm-id` are
+mutually exclusive execution scopes.
 
 ![Synthetic Windows and Linux guest findings](guest-inspection.png)
 
@@ -57,7 +83,8 @@ operations on the selected VMs:
 | `Microsoft.Compute/locations/runCommands/read` | Read command definitions; provided by Reader at subscription scope. |
 
 Use Reader for inventory and a custom role granting `runCommand/action` on the
-specific VMs to be inspected. Virtual Machine Contributor also permits invocation
+VMs to be inspected (or the selected subscription for fleet inspection).
+Virtual Machine Contributor also permits invocation
 but grants broader capabilities. The service does not assign roles automatically.
 The action endpoint used here is `/virtualMachines/{name}/runCommand`; this is
 separate from managed Run Command child resources and their `runCommands/write`
@@ -129,4 +156,4 @@ for inspection, but Azure's own Action Run Command limit can be up to 90 minutes
 `guest --dry-run` reads selected VM metadata and prints the OS/command plan. It
 does not submit Run Command or create reports. Automated tests use mocked Azure
 responses and local/container fixtures; live guest execution requires an operator
-to choose the actual VM IDs and start that mode.
+to choose the subscription or actual VM IDs and start that mode.

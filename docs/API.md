@@ -43,17 +43,33 @@ Example scan request:
 
 Modes: `azure` for live metadata discovery, `targets` with an array of IPs/hostnames,
 `inventory` with UTF-8 text in `inventory_csv`, `demo` for synthetic results, or
-`guest` for explicitly selected VM guest inspections.
+`guest` for subscription-wide or individually selected VM guest inspections.
 Subscription IDs must be UUIDs. At most 256 direct targets, 1.5 MB inventory text,
 64 HTTP workers, 1,024 TCP sockets, and 5,000 new TCP connections/second are allowed.
 The queue admits up to eight pending/running runs. One run executes at a time.
 
-Guest mode requires `vm_ids`, an explicit array of 1–50 full VM resource IDs,
-and accepts `guest_timeout` (60–1800 seconds, default 180). No caller-supplied
-script or command is accepted. VM IDs are rejected in other modes. Subscription
-filters do not expand or replace the explicit guest execution scope. The guest
+Guest mode requires exactly one execution scope: `guest_subscription`, one UUID
+to discover and inspect every VM in that subscription (no 50-VM limit), or
+`vm_ids`, an explicit array of 1–50 full VM resource IDs. Empty or mixed scopes
+are rejected; `guest_subscription` accepts one UUID, not a list. `subscriptions` is only a browsing
+filter in the individual-ID workflow and must be empty with `guest_subscription`.
+Both guest fields are rejected in other modes. The worker resolves every inventory
+page before executing commands; discovery errors prevent all submissions and are
+saved in the report. `guest_timeout` is 60–1800 seconds (default 180). No caller-supplied
+script or command is accepted. The guest
 worker checks that the VM is running with a ready agent before submission and
 selects the fixed OS-specific script. Guest commands run sequentially.
+
+```json
+{
+  "mode": "guest",
+  "name": "Subscription PHP inventory",
+  "guest_subscription": "00000000-0000-0000-0000-000000000001",
+  "guest_timeout": 180
+}
+```
+
+Or select specific VMs:
 
 ```json
 {
@@ -70,6 +86,10 @@ Guest rows include `evidenceSource=guest`, `guestStatus`, `guestSource`,
 Summary fields `guestVms` and `guestChecked` count unique VMs separately from
 software records and HTTP response counts. Coverage has `scanType=guest`,
 `guest` progress counters, and `remoteMayContinue` for uncertain remote execution.
+`guest.scope` is `subscription` or `vms`; subscription scope adds `subscriptionId`,
+`subscriptionName` (when VMs were found), and `discoveryStatus`. `guest.notSubmitted`
+counts VMs left after cancellation; their rows use `guestStatus=not_submitted`.
+Stopped/unready VMs have `guestStatus=skipped` and remain in the same report.
 
 Results accept `offset` (default 0), `limit` (1–500, default 100), `q`,
 `resource_type`, and `assessment`. They are sorted by risk priority, then target.

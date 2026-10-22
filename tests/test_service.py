@@ -132,6 +132,35 @@ raise SystemExit(run_guest([LINUX, WINDOWS], 'results.csv', runner=azure_reader,
         self.assertIn('VMs inspected', html)
         self.assertNotIn('port </small>', html)
 
+    def test_subscription_guest_background_worker_reports_private_and_skipped_vms(self):
+        fixture = Path(self.directory.name) / 'subscription-fixture.py'
+        fixture.write_text('''import sys
+from azure_php_scout.guest import run_guest
+sys.path.insert(0, sys.argv[1])
+from test_guest import SUBSCRIPTION, fleet_reader, output
+def invoke(identifier, os, timeout, stop):
+    return output(os=os)
+raise SystemExit(run_guest([], 'results.csv', subscription=SUBSCRIPTION, runner=fleet_reader, invoker=invoke))
+''', encoding='utf-8')
+        with patch('azure_php_scout.service.shutil.which', return_value='fixture-az'), patch.object(
+                JobManager, 'command', return_value=[sys.executable, str(fixture), str(Path(__file__).parent)]):
+            response = self.client.post('/api/scans', headers=AUTH, json=dict(mode='guest', guest_subscription=SUBSCRIPTION))
+            self.assertEqual(response.status_code, 202)
+            job = self.wait(response.json()['id'])
+        self.assertEqual(job['state'], 'partial', job)
+        self.assertEqual(job['summary']['guestChecked'], 2)
+        self.assertEqual(job['summary']['guestVms'], 3)
+        self.assertEqual(job['coverage']['guest']['skipped'], 1)
+        self.assertEqual(job['coverage']['guest']['subscriptionId'], SUBSCRIPTION)
+        path = '/api/scans/' + job['id']
+        html = self.client.get(path + '/export/html', headers=AUTH).text
+        self.assertIn('Subscription scope:', html)
+        self.assertIn('Synthetic subscription', html)
+        self.assertIn('stopped-private', html)
+        rows = self.client.get(path + '/results', headers=AUTH).json()['rows']
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({row['guestStatus'] for row in rows}, {'checked', 'skipped'})
+
     def test_cancellation_preserves_a_terminal_job(self):
         created = self.client.post("/api/scans", headers=AUTH, json=dict(mode="demo", name="Cancelled demo")).json()
         job = self.wait(created["id"])

@@ -126,8 +126,16 @@ def coverage_html(scope):
     guest = scope.get("scanType") == "guest"
     if guest:
         info = scope.get("guest", {})
+        if info.get("scope") == "subscription":
+            items.append('<p><strong>Subscription scope:</strong> {} ({}) · all VMs, public and private · discovery {}</p>'.format(
+                text(info.get("subscriptionName") or info.get("subscriptionId")), text(info.get("subscriptionId")),
+                text(info.get("discoveryStatus", "unknown"))))
+            if info.get("discoveryStatus") == "complete" and not info.get("requested"):
+                items.append('<p>No VMs were returned for the selected subscription by Azure Resource Graph.</p>')
         items.append('<p><strong>Guest inspection:</strong> {} / {} VMs checked · {} failed · {} skipped. Includes private VMs; no public endpoint is required.</p>'.format(
             info.get("checked", 0), info.get("requested", 0), info.get("failed", 0), info.get("skipped", 0)))
+        if info.get("notSubmitted"):
+            items.append('<p>{} VMs were not submitted because the scan stopped; their rows remain in this report.</p>'.format(info["notSubmitted"]))
         items.append('<p>Fixed scripts run through Azure Run Command as root/SYSTEM. Installed disk/package versions are separate from HTTP runtime evidence. No software is installed or reconfigured by these scripts.</p>')
         if scope.get("remoteMayContinue"):
             items.append('<div class="coverage-warning">A submitted guest script may still be running in Azure. Stopping this scan cannot cancel Azure Action Run Command; check Azure before retrying.</div>')

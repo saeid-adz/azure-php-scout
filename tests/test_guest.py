@@ -1,6 +1,7 @@
 """Guest inspection tests never execute Azure commands or contact customer VMs."""
 import base64
 import contextlib
+import csv
 import io
 import json
 import os
@@ -20,6 +21,7 @@ from azure_php_scout.service import ScanRequest
 SUBSCRIPTION = '00000000-0000-0000-0000-000000000001'
 LINUX = '/subscriptions/' + SUBSCRIPTION + '/resourceGroups/example-rg/providers/Microsoft.Compute/virtualMachines/linux-private'
 WINDOWS = LINUX.rsplit('/', 1)[0] + '/windows-private'
+STOPPED = LINUX.rsplit('/', 1)[0] + '/stopped-private'
 
 
 def encoded(value):
@@ -46,6 +48,28 @@ def azure_reader(args):
     return dict(statuses=[dict(code='PowerState/running')], vmAgent=dict(statuses=[dict(code='ProvisioningState/succeeded')]))
 
 
+def fleet_reader(args, machines=None):
+    """Paginated synthetic subscription with no public-IP properties."""
+    if args[0] == 'account':
+        return [dict(id=SUBSCRIPTION, name='Synthetic subscription', tenantId='tenant', state='Enabled'),
+                dict(id='00000000-0000-0000-0000-000000000002', name='Other subscription', tenantId='tenant', state='Enabled')]
+    if args[0] == 'graph':
+        assert args[args.index('--subscriptions') + 1:args.index('--subscription')] == [SUBSCRIPTION]
+        assert args[args.index('--subscription') + 1] == SUBSCRIPTION
+        assert guest.VM_QUERY in args
+        machines = machines if machines is not None else [LINUX, WINDOWS, STOPPED]
+        offset = int(args[args.index('--skip-token') + 1]) if '--skip-token' in args else 0
+        end = offset + 30
+        return dict(data=[dict(id=identifier, name=identifier.rsplit('/', 1)[-1], resourceGroup='example-rg',
+                               subscriptionId=SUBSCRIPTION, os='Windows' if identifier == WINDOWS else 'Linux',
+                               powerState='PowerState/deallocated' if identifier == STOPPED else 'PowerState/running')
+                          for identifier in machines[offset:end]], total_records=len(machines),
+                    skip_token=str(end) if end < len(machines) else None)
+    if STOPPED in args and args[:2] == ['vm', 'get-instance-view']:
+        return dict(statuses=[dict(code='PowerState/deallocated')])
+    return azure_reader(args)
+
+
 class GuestTests(unittest.TestCase):
     def test_explicit_resource_ids_are_required_and_deduplicated(self):
         self.assertEqual(guest.selected_vm_ids([LINUX, LINUX.upper()]), [guest.vm_id(LINUX.upper())])
@@ -70,6 +94,115 @@ class GuestTests(unittest.TestCase):
         self.assertEqual(len(found['vms']), 2)
         self.assertEqual({row['os'] for row in found['vms']}, {'Linux', 'Windows'})
         self.assertEqual(found['errors'], [])
+
+    def test_subscription_scope_requires_exactly_one_valid_execution_scope(self):
+        self.assertEqual(ScanRequest(mode='guest', guest_subscription=SUBSCRIPTION).guest_subscription, SUBSCRIPTION)
+        for config in (dict(guest_subscription=''), dict(guest_subscription='invalid'),
+                       dict(guest_subscription=SUBSCRIPTION + ',' + SUBSCRIPTION),
+                       dict(guest_subscription=SUBSCRIPTION, vm_ids=[LINUX]),
+                       dict(subscriptions=[SUBSCRIPTION]),
+                       dict(guest_subscription=SUBSCRIPTION, subscriptions=[SUBSCRIPTION])):
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                ScanRequest(mode='guest', **config)
+        with self.assertRaises(ValueError):
+            ScanRequest(mode='azure', guest_subscription=SUBSCRIPTION)
+
+    def test_subscription_scan_pages_and_reports_more_than_fifty_private_vms(self):
+        machines = [LINUX, WINDOWS, STOPPED] + [LINUX + str(i) for i in range(53)]
+        submitted = []
+        def invoke(identifier, os, timeout, stop):
+            submitted.append(identifier)
+            return output(os=os)
+        with tempfile.TemporaryDirectory() as folder:
+            destination = Path(folder) / 'results.csv'
+            self.assertEqual(guest.run_guest([], destination, subscription=SUBSCRIPTION,
+                             runner=lambda args: fleet_reader(args, machines), invoker=invoke), 1)
+            scope = json.loads(destination.with_suffix('.coverage.json').read_text())
+            self.assertEqual(scope['guest']['requested'], 56)
+            self.assertEqual(scope['guest']['checked'], 55)
+            self.assertEqual(scope['guest']['skipped'], 1)
+            self.assertEqual(scope['guest']['discoveryStatus'], 'complete')
+            self.assertEqual(scope['guest']['subscriptionId'], SUBSCRIPTION)
+            self.assertEqual(len(submitted), 55)
+            self.assertNotIn(STOPPED, submitted)
+            with destination.open(newline='', encoding='utf-8') as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual({row['resourceId'] for row in rows}, set(machines))
+            self.assertTrue(all(row['subscription'] == 'Synthetic subscription' for row in rows))
+            self.assertEqual(next(row['guestStatus'] for row in rows if row['resourceId'] == STOPPED), 'skipped')
+            html = destination.with_suffix('.html').read_text(encoding='utf-8')
+            self.assertIn('all VMs, public and private', html)
+            self.assertIn(SUBSCRIPTION, html)
+            self.assertIn('55 / 56 VMs checked', html)
+
+    def test_failed_incomplete_or_cross_subscription_discovery_submits_nothing(self):
+        def incomplete(args):
+            if args[0] == 'account':
+                return fleet_reader(args)
+            return dict(data=[dict(id=LINUX, name='linux-private')], total_records=2)
+        def denied(args):
+            raise RuntimeError('AuthorizationFailed: inventory permission required')
+        def crossed(args):
+            result = fleet_reader(args)
+            if args[0] == 'graph':
+                result['data'][0]['id'] = LINUX.replace(SUBSCRIPTION, '00000000-0000-0000-0000-000000000002')
+            return result
+        for reader in (incomplete, denied, crossed):
+            with self.subTest(reader=reader.__name__), tempfile.TemporaryDirectory() as folder:
+                destination = Path(folder) / 'results.csv'
+                invoker = Mock(side_effect=AssertionError('No commands should be submitted'))
+                self.assertEqual(guest.run_guest([], destination, subscription=SUBSCRIPTION, runner=reader, invoker=invoker), 1)
+                invoker.assert_not_called()
+                scope = json.loads(destination.with_suffix('.coverage.json').read_text())
+                self.assertEqual(scope['guest']['discoveryStatus'], 'failed')
+                self.assertEqual(scope['scanStatus'], 'failed')
+                self.assertTrue(scope['errors'])
+                self.assertTrue(destination.with_suffix('.html').is_file())
+
+    def test_empty_subscription_produces_a_complete_empty_report(self):
+        with tempfile.TemporaryDirectory() as folder:
+            destination = Path(folder) / 'results.csv'
+            self.assertEqual(guest.run_guest([], destination, subscription=SUBSCRIPTION,
+                             runner=lambda args: fleet_reader(args, []), invoker=Mock(side_effect=AssertionError('No VMs'))), 0)
+            scope = json.loads(destination.with_suffix('.coverage.json').read_text())
+            self.assertEqual(scope['scanStatus'], 'complete')
+            self.assertEqual(scope['guest']['requested'], 0)
+            self.assertIn('No VMs were returned', destination.with_suffix('.html').read_text(encoding='utf-8'))
+
+    def test_subscription_cancellation_keeps_unsubmitted_vms_in_the_report(self):
+        stop = threading.Event()
+        def invoke(identifier, os, timeout, event):
+            stop.set()
+            return output(os=os)
+        with tempfile.TemporaryDirectory() as folder:
+            destination = Path(folder) / 'results.csv'
+            self.assertEqual(guest.run_guest([], destination, subscription=SUBSCRIPTION,
+                             runner=fleet_reader, invoker=invoke, stop=stop), 130)
+            scope = json.loads(destination.with_suffix('.coverage.json').read_text())
+            self.assertEqual(scope['guest']['notSubmitted'], 2)
+            self.assertEqual(scope['guest']['completed'], 1)
+            with destination.open(newline='', encoding='utf-8') as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(len(rows), 3)
+            self.assertEqual([row['guestStatus'] for row in rows], ['checked', 'not_submitted', 'not_submitted'])
+
+    def test_subscription_cli_dry_run_and_job_command(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(guest, 'az_json', fleet_reader):
+            destination = Path(folder) / 'results.csv'
+            with patch.object(guest.subprocess, 'Popen', side_effect=AssertionError('Azure execution')), contextlib.redirect_stdout(io.StringIO()) as captured:
+                self.assertEqual(guest.main(['--subscription', SUBSCRIPTION, '--dry-run', '-o', str(destination)]), 0)
+            plan = json.loads(captured.getvalue())
+            self.assertEqual(len(plan), 3)
+            self.assertEqual({item['commandId'] for item in plan}, {'RunShellScript', 'RunPowerShellScript'})
+            self.assertFalse(destination.exists())
+            manager = JobManager(Path(folder) / 'manager')
+            try:
+                command = manager.command(ScanRequest(mode='guest', guest_subscription=SUBSCRIPTION).model_dump(), Path(folder))
+                self.assertIn('--subscription', command)
+                self.assertEqual(command[command.index('--subscription') + 1], SUBSCRIPTION)
+                self.assertNotIn('--vm-id', command)
+            finally:
+                manager.close()
 
     def test_framed_output_separates_binary_and_package_evidence(self):
         parsed = guest.parse_output(output(packages=[('php8.2-fpm', '1:8.2.29-1+deb12u2')]), 'Linux')
