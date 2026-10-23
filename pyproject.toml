@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "azure-php-scout"
-version = "0.5.0"
+version = "0.5.1"
 description = "Find potentially affected PHP services across Azure VMs, App Services and Static Web Apps."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -3,6 +3,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 import json
 import subprocess
+from .processes import capture
 
 QUERY = """
 Resources
@@ -36,10 +37,9 @@ class Inventory:
     resources: dict = field(default_factory=dict)
 
 
-def az_json(arguments):
+def az_json(arguments, *, stop=None):
     try:
-        result = subprocess.run(["az", *arguments, "--only-show-errors", "-o", "json"],
-                                text=True, capture_output=True, timeout=180)
+        result = capture(["az", *arguments, "--only-show-errors", "-o", "json"], timeout=180, stop=stop)
     except FileNotFoundError as exc:
         raise RuntimeError("Azure CLI is required for --azure. Install az and run az login.") from exc
     except subprocess.TimeoutExpired as exc:

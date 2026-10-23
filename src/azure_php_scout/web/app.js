@@ -80,6 +80,11 @@ async function loadSelected() {
   $('coverage-ports').textContent = guest ? 'Guest inspection · Azure Run Command' : scope.vmPortScope || (job.config.vm_ports === 'all' ? 'Full TCP range 1–65535' : job.config.vm_ports);
   if (job.config.guest_retry_scan) $('coverage-resources').textContent = requestedVms + ' retry VMs · source scan ' + job.config.guest_retry_scan + ' · original results preserved';
   $('coverage-tcp').textContent = guest ? (discovering ? 'Waiting for VM discovery' : (guestScope.completed || 0) + ' / ' + requestedVms + ' VMs processed') + ' · ' + (guestScope.failed || 0) + ' failed · ' + (guestScope.skipped || 0) + ' skipped · ' + (guestScope.notSubmitted || 0) + ' not submitted' : tcp.total ? tcp.checked.toLocaleString() + ' / ' + tcp.total.toLocaleString() + ' · ' + tcp.open + ' open' : job.config.mode === 'demo' ? 'Synthetic data' : 'Waiting for discovery';
+  if (guest && guestScope.currentVm && runningStates.has(job.state)) {
+    const stages = {vm_metadata:'Reading VM metadata', agent_readiness:'Checking VM agent', run_command:'Waiting for Azure Run Command'};
+    const started = Date.parse(guestScope.stageStartedAt || '');
+    $('coverage-tcp').textContent += ' · ' + guestScope.currentVm.split('/').pop() + ' · ' + (stages[guestScope.currentStage] || 'Preparing inspection') + (Number.isFinite(started) ? ' · ' + Math.max(0,Math.floor((Date.now()-started)/1000)) + 's in this stage' : '');
+  }
   $('run-progress').hidden = !runningStates.has(job.state);
   $('tcp-progress').value = tcp.total ? Math.round(100 * tcp.checked / tcp.total) : 0;
   $('progress-text').textContent = tcp.total ? tcp.open + ' open TCP ports · ' + (scope.httpChecked || 0) + ' HTTP checks completed' : job.state === 'queued' ? 'Queued behind the current scan' : 'Collecting inventory and HTTP evidence…';

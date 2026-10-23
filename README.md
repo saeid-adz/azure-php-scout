@@ -151,6 +151,12 @@ own report. Review Azure before retrying timeouts because an accepted command
 may still be running. Expired/interactive-sign-in errors now stop further guest
 submissions and preserve the rest as unsubmitted, ready for another retry.
 
+The dashboard shows the current VM, inspection phase, and seconds spent in that
+phase. Local Azure CLI timeout/cancellation cleanup also stops launcher children
+and has bounded waits, so an inherited output pipe cannot freeze the next VM.
+The Run Command wait and metadata requests have separate time limits; stopping
+the local CLI does not cancel a script already accepted by Azure.
+
 ```sh
 az login
 azure-php-scout guest --retry-from previous-results.csv --dry-run

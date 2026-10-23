@@ -4,10 +4,10 @@ import base64
 import binascii
 from collections import defaultdict
 import csv
+from datetime import datetime, timezone
 import hashlib
 from importlib.resources import files
 import json
-import os
 from pathlib import Path
 import re
 import signal
@@ -15,13 +15,13 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 from uuid import UUID
 
 from .advisories import enrich, parse_version
 from .inventory import az_json, graph_resources, resource_records
 from .report import csv_cell, write_html_report
 from .snapshots import replace_snapshot
+from .processes import capture, CommandCancelled
 
 GUEST_FIELDS = ["evidenceSource", "guestStatus", "guestSource", "guestPath", "guestPackage",
                 "guestPackageVersion", "guestProcessObserved", "guestCoverage", "guestScriptSha256"]
@@ -272,9 +272,6 @@ def invoke(resource_id, os_name, timeout, stop):
     resource = files("azure_php_scout").joinpath("scripts/" + filename)
     snapshot = resource.read_bytes()
     script_hash = hashlib.sha256(snapshot).hexdigest()
-    env = dict(os.environ)
-    env.pop("SCOUT_API_TOKEN", None)
-    env["PYTHONIOENCODING"] = "utf-8"
     with tempfile.TemporaryDirectory(prefix="scout-guest-script-") as folder:
         script = Path(folder) / filename
         script.write_bytes(snapshot)
@@ -282,28 +279,20 @@ def invoke(resource_id, os_name, timeout, stop):
                 "--subscription", resource_id.split("/")[2], "--command-id", command,
                 "--scripts", "@" + str(script), "--only-show-errors", "-o", "json"]
         try:
-            process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                       text=True, encoding="utf-8", errors="replace", env=env)
-        except OSError as exc:
-            raise GuestCommandError("Unable to start Azure CLI for guest inspection") from exc
-        deadline = time.monotonic() + timeout
-        try:
-            while True:
-                try:
-                    stdout, stderr = process.communicate(timeout=0.25)
-                    break
-                except subprocess.TimeoutExpired:
-                    if stop.is_set() or time.monotonic() >= deadline:
-                        status = "cancelled" if stop.is_set() else "timeout"
-                        raise GuestCommandError(
-                            "Stopped waiting for Azure Run Command. The submitted VM script may still be running; check Azure before retrying.",
-                            remote_may_continue=True, status=status)
-            if process.returncode:
-                message = (stderr.strip().splitlines() or ["Azure CLI Run Command request failed"])[0][:500]
+            try:
+                response = capture(args, timeout=timeout, stop=stop)
+            except (subprocess.TimeoutExpired, CommandCancelled) as exc:
+                raise GuestCommandError(
+                    "Stopped waiting for Azure Run Command. The submitted VM script may still be running; check Azure before retrying.",
+                    remote_may_continue=True, status="cancelled" if isinstance(exc, CommandCancelled) else "timeout") from exc
+            except OSError as exc:
+                raise GuestCommandError("Unable to start Azure CLI for guest inspection") from exc
+            if response.returncode:
+                message = (response.stderr.strip().splitlines() or ["Azure CLI Run Command request failed"])[0][:500]
                 # CLI failure can occur while polling an already accepted action.
                 raise GuestCommandError(message, remote_may_continue=True)
             try:
-                result = json.loads(stdout)
+                result = json.loads(response.stdout)
                 if not isinstance(result, dict):
                     raise ValueError("Invalid Run Command result")
                 result["_scoutScriptSha256"] = script_hash
@@ -313,14 +302,6 @@ def invoke(resource_id, os_name, timeout, stop):
         except GuestCommandError as exc:
             exc.script_sha256 = script_hash
             raise
-        finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.communicate(timeout=3)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.communicate()
 
 
 def base_row(resource_id, vm=None):
@@ -371,13 +352,20 @@ def result_rows(resource_id, vm, output):
     return rows
 
 
-def inspect_vm(resource_id, *, timeout, stop, runner=az_json, invoker=invoke):
+def inspect_vm(resource_id, *, timeout, stop, runner=az_json, invoker=invoke, progress=None):
+    def stage(name):
+        if progress:
+            progress(name)
+    def read(arguments):
+        return runner(arguments, stop=stop) if runner is az_json else runner(arguments)
     args = ["--ids", resource_id, "--subscription", resource_id.split("/")[2]]
-    vm = runner(["vm", "show", *args])
+    stage("vm_metadata")
+    vm = read(["vm", "show", *args])
     row = base_row(resource_id, vm)
     if row["os"] not in COMMANDS:
         return [enrich(dict(row, guestStatus="skipped", note="Unsupported or unknown VM OS; no command submitted."))], False
-    view = runner(["vm", "get-instance-view", *args])
+    stage("agent_readiness")
+    view = read(["vm", "get-instance-view", *args])
     view = view.get("instanceView") or view
     power = next((item.get("code", "") for item in (view.get("statuses") or []) if item.get("code", "").lower().startswith("powerstate/")), "unknown")
     ready = any(item.get("code", "").lower() == "provisioningstate/succeeded" for item in ((view.get("vmAgent") or {}).get("statuses") or []))
@@ -386,6 +374,7 @@ def inspect_vm(resource_id, *, timeout, stop, runner=az_json, invoker=invoke):
     if stop.is_set():
         return [enrich(dict(row, guestStatus="cancelled", note="Cancelled before guest command submission."))], False
     try:
+        stage("run_command")
         response = invoker(resource_id, row["os"], timeout, stop)
         return result_rows(resource_id, vm, parse_output(response, row["os"])), False
     except GuestCommandError as exc:
@@ -505,13 +494,19 @@ def run_guest(vm_ids, destination, *, subscription=None, all_subscriptions=False
                 subscription_results[resource_id.split("/")[2]]["notSubmitted"] += 1
             continue
         scope["guest"]["currentVm"] = resource_id
+        scope["guest"]["currentVmStartedAt"] = datetime.now(timezone.utc).isoformat()
         if progress:
             progress("Guest inspection: {} / {}: {}".format(scope["guest"]["completed"] + 1, len(vm_ids), resource_id))
         save_results(destination, rows, scope)
+        def stage_progress(stage):
+            scope["guest"].update(currentStage=stage, stageStartedAt=datetime.now(timezone.utc).isoformat())
+            save_results(destination, rows, scope)
+            if progress:
+                progress("VM stage: {}".format(stage))
         try:
-            findings, remote = inspect_vm(resource_id, timeout=timeout, stop=stop, runner=runner, invoker=invoker)
+            findings, remote = inspect_vm(resource_id, timeout=timeout, stop=stop, runner=runner, invoker=invoker, progress=stage_progress)
         except (RuntimeError, ValueError) as exc:
-            findings, remote = [enrich(dict(base_row(resource_id, machines.get(resource_id.casefold())), guestStatus="failed", note=str(exc)[:1000]))], False
+            findings, remote = [enrich(dict(base_row(resource_id, machines.get(resource_id.casefold())), guestStatus="cancelled" if stop.is_set() else "failed", note=str(exc)[:1000]))], False
         for finding in findings:
             machine = machines.get(resource_id.casefold(), {})
             if machine.get("subscription"):
@@ -541,6 +536,9 @@ def run_guest(vm_ids, destination, *, subscription=None, all_subscriptions=False
                 progress(message)
         save_results(destination, rows, scope)
     scope["guest"].pop("currentVm", None)
+    scope["guest"].pop("currentVmStartedAt", None)
+    scope["guest"].pop("currentStage", None)
+    scope["guest"].pop("stageStartedAt", None)
     if stop.is_set():
         scope["errors"].append("Inspection stopped; {} remaining VM commands were not submitted.".format(scope["guest"]["notSubmitted"]))
     scope["scanStatus"] = "interrupted" if stop.is_set() else "failed" if scope["errors"] else "complete"

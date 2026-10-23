@@ -228,7 +228,13 @@ missing permission, network errors, and agent failures are preserved per VM.
 
 `--guest-timeout` (default 180, range 60–1800 seconds) bounds how long the client
 waits for the action result. Metadata/preflight CLI requests have their separate
-180-second request timeout. This is not a remote execution timeout. Cancelling prevents further
+180-second request timeout, so this is a per-phase limit rather than a total VM
+deadline. The dashboard shows the current VM, phase, and elapsed phase time.
+Timeout/cancellation cleanup uses a separate process group on POSIX and a tree
+termination request on Windows, with bounded waits even if a detached descendant
+keeps an output pipe open. Metadata waits also respond to cancellation.
+
+These limits are not remote execution timeouts. Cancelling prevents further
 submissions and stops the local wait; it cannot cancel an Action Run Command
 already accepted by Azure. The report records `remoteMayContinue` when execution
 state is uncertain. Check Azure before retrying such a VM. Scripts are designed

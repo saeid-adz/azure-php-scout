@@ -119,6 +119,10 @@ Guest rows include `evidenceSource=guest`, `guestStatus`, `guestSource`,
 Summary fields `guestVms` and `guestChecked` count unique VMs separately from
 software records and HTTP response counts. Coverage has `scanType=guest`,
 `guest` progress counters, and `remoteMayContinue` for uncertain remote execution.
+While inspecting a VM, `guest.currentVm` and `guest.currentVmStartedAt` identify
+the current resource and its start time. `guest.currentStage` is `vm_metadata`,
+`agent_readiness`, or `run_command`; `guest.stageStartedAt` is an ISO 8601 UTC
+timestamp for that phase. These transient fields are removed on completion.
 `guest.scope` is `all_subscriptions`, `subscription`, `vms`, or `retry`; single-subscription scope adds `subscriptionId`,
 `subscriptionName` (when VMs were found), and `discoveryStatus`. `guest.notSubmitted`
 counts VMs left after cancellation; their rows use `guestStatus=not_submitted`.
