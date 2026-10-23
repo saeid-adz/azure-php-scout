@@ -142,6 +142,21 @@ different literal IP or an unselected port are recorded instead of followed.
 
 ## Inspect PHP inside Windows and Linux VMs
 
+To continue after an interrupted scan or expired Azure sign-in, run `az login`
+on the service host, select the previous run in the dashboard, and click
+**Retry remaining VMs**. The new run targets only failed, timed-out, cancelled, and
+unsubmitted VMs, without a 50-VM limit. Successful, incomplete-but-inspected, and
+skipped VMs are excluded; the original report stays unchanged. The retry has its
+own report. Review Azure before retrying timeouts because an accepted command
+may still be running. Expired/interactive-sign-in errors now stop further guest
+submissions and preserve the rest as unsubmitted, ready for another retry.
+
+```sh
+az login
+azure-php-scout guest --retry-from previous-results.csv --dry-run
+azure-php-scout guest --retry-from previous-results.csv -o retried-results.csv
+```
+
 In **New scan**, select **VM guest inspection (Windows / Linux)**, then **All
 accessible subscriptions (automatic)**. Start the inspection without entering
 subscription or VM IDs. The service refreshes the host Azure CLI account's

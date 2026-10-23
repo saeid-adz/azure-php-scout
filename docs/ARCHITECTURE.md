@@ -38,6 +38,12 @@ per-VM failures and remote cancellation uncertainty, and label package/disk
 versions separately from HTTP evidence. Reader-only inventory does not execute
 these scripts. No custom guest script is accepted by the API.
 
+Retry scope resolves failed/timed-out/cancelled/unsubmitted VM IDs from a finished
+scan's CSV and keeps the source unchanged. It creates a separate run/report without
+rediscovery or the 50-VM selection limit. The API accepts a stored scan UUID; only
+the CLI accepts a report path. Interactive/expired-sign-in errors stop further VM
+submissions and preserve their rows as unsubmitted for a later explicit retry.
+
 `advisories.py` separates observed runtime versions, configuration values, missing
 versions, upstream lifecycle, and branch-specific CVE ranges. `report.py` renders
 escaped standalone HTML. `service.py` validates requests and protects APIs;

@@ -127,6 +127,9 @@ def coverage_html(scope):
     guest = scope.get("scanType") == "guest"
     if guest:
         info = scope.get("guest", {})
+        if info.get("scope") == "retry":
+            items.append('<p><strong>Retry inspection:</strong> {} failed, timed-out, cancelled, or unsubmitted VMs from {}. {} other VMs are excluded. This report contains only the retry results; the original report is preserved.</p>'.format(
+                text(info.get("requested", 0)), text(info.get("retrySource")), text(info.get("retryExcluded", 0))))
         if info.get("scope") == "all_subscriptions":
             items.append('<p><strong>Subscription scope:</strong> All accessible subscriptions discovered automatically from the host Azure CLI account · discovery {}</p>'.format(text(info.get("discoveryStatus"))))
             subscriptions = info.get("subscriptionResults", [])

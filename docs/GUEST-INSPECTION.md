@@ -187,6 +187,40 @@ as failed or incomplete checks instead of a successful absence finding.
 
 ## Cancellation, timeouts, and retries
 
+Select a finished guest scan in the dashboard and use **Retry remaining VMs** to
+create a new run from its saved CSV. This includes `failed`, `timeout`, `cancelled`,
+and `not_submitted` VMs, deduplicated by resource ID. VMs with any checked,
+incomplete-but-inspected, or skipped row are excluded. The source report is kept
+unchanged; the new report contains only this retry's results and identifies the
+source scan. There is no 50-VM limit for retries. No subscription rediscovery is
+needed, so the original VM scope cannot expand to newly created resources.
+
+```sh
+az login
+azure-php-scout guest --retry-from previous-results.csv --dry-run
+azure-php-scout guest --retry-from previous-results.csv -o retried-results.csv
+```
+
+Retry dry-run reads the local report and makes no Azure requests. CLI output must
+differ from the source filename. Retry includes only VMs recorded in the saved
+report; resources missing because subscription discovery failed are outside that
+retry and need a new inventory scan. Repeated retries can use the latest retry
+report to target only what still failed. Skipped/offline VMs need a separate
+selection when they are ready to be inspected.
+
+When an Azure request returns an expired-sign-in / AADSTS / interactive-login
+error, the worker stops further VM submissions and records those VMs as
+`not_submitted`. The coverage field `guest.authenticationRequired` is true.
+Run `az login` on the service host (and sign into the required tenant when needed),
+then retry the remaining VMs. The worker does not bypass sign-in-frequency or MFA
+policies. Authorization/RBAC failures remain per-VM errors and do not trigger
+this sign-in stop. Refreshing sign-in does not grant missing permissions.
+See Microsoft's [Azure CLI sign-in documentation](https://learn.microsoft.com/en-us/cli/azure/authenticate-azure-cli-interactively).
+
+For a timeout/cancellation, check Azure before retrying because an accepted
+Action Run Command cannot be cancelled locally. Retrying a report is an explicit
+operator action; guest commands are never automatically resubmitted.
+
 VMs are checked sequentially, one request per selected VM, without automatic
 retries. Azure permits one Action Run Command per VM at a time and typically
 takes at least 20 seconds per invocation. Another command already in progress,

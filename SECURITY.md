@@ -24,6 +24,12 @@ continue in account-wide mode. The API does not
 accept custom guest scripts or arbitrary commands. The host identity must have
 the relevant Run Command action permission. Reader alone is insufficient.
 The service token can request these privileged checks using that host identity.
+Retrying a finished scan is also privileged execution. It selects only recorded
+failed/timed-out/cancelled/unsubmitted VMs; it does not expand discovery scope or
+overwrite the source report. The API accepts a stored scan UUID, never a local
+file path. Sign-in expiry stops further VM submission; the operator must refresh
+Azure CLI authentication before retrying. An accepted remote command may still
+be running after a timeout; inspect Azure before requesting another attempt.
 Use it on resources you administer or
 have permission to assess. Azure discovery is read-only, but scans create network
 traffic and logs. Full-range scans can run for hours and are explicitly selected.

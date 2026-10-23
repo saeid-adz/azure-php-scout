@@ -71,10 +71,14 @@ async function loadSelected() {
   $('stat-endpoints').textContent = guest ? (summary.endpoints || 0) + ' guest evidence records · ' + (discovering ? 'Discovering VMs' : requestedVms + ' VMs in scope') : (summary.endpoints || 0) + ' endpoints checked';
   $('scan-state').className = 'status-badge ' + job.state; $('scan-state').textContent = statusLabel(job);
   $('cancel-scan').hidden = !runningStates.has(job.state); $('cancel-scan').disabled = job.state === 'cancelling';
+  $('retry-guest').hidden = !guest || runningStates.has(job.state) || !summary.guestRetryable;
+  $('retry-guest').textContent = 'Retry ' + (summary.guestRetryable || 0) + ' remaining VMs';
+  $('retry-guest').title = 'Retries failed, timed-out, cancelled, and unsubmitted VMs. Checked and skipped VMs stay in the original report.' + (summary.guestTimeouts ? ' Check Azure before retrying ' + summary.guestTimeouts + ' timed-out VMs; their commands may still be running.' : '');
   $('download-html').disabled = !summary.endpoints && scope.scanType !== 'guest'; $('download-csv').disabled = !summary.endpoints && scope.scanType !== 'guest';
   $('demo-notice').hidden = job.config.mode !== 'demo';
   $('coverage-resources').textContent = guest ? (discovering ? 'Discovering all VMs' : requestedVms + ' VMs') + (allSubscriptions ? ' · ' + (scope.subscriptions || 0) + ' subscriptions · automatic account scope' : subscriptionScope ? ' · subscription ' + (guestScope.subscriptionName || job.config.guest_subscription) : ' · selected resource IDs') : resources.vm !== undefined ? resources.vm + ' VMs · ' + (resources.appservice || 0) + ' apps · ' + (resources.staticwebapp || 0) + ' static apps' : scope.source || 'Inventory discovery in progress';
   $('coverage-ports').textContent = guest ? 'Guest inspection · Azure Run Command' : scope.vmPortScope || (job.config.vm_ports === 'all' ? 'Full TCP range 1–65535' : job.config.vm_ports);
+  if (job.config.guest_retry_scan) $('coverage-resources').textContent = requestedVms + ' retry VMs · source scan ' + job.config.guest_retry_scan + ' · original results preserved';
   $('coverage-tcp').textContent = guest ? (discovering ? 'Waiting for VM discovery' : (guestScope.completed || 0) + ' / ' + requestedVms + ' VMs processed') + ' · ' + (guestScope.failed || 0) + ' failed · ' + (guestScope.skipped || 0) + ' skipped · ' + (guestScope.notSubmitted || 0) + ' not submitted' : tcp.total ? tcp.checked.toLocaleString() + ' / ' + tcp.total.toLocaleString() + ' · ' + tcp.open + ' open' : job.config.mode === 'demo' ? 'Synthetic data' : 'Waiting for discovery';
   $('run-progress').hidden = !runningStates.has(job.state);
   $('tcp-progress').value = tcp.total ? Math.round(100 * tcp.checked / tcp.total) : 0;
@@ -170,6 +174,15 @@ for (const id of ['resource-filter','assessment-filter']) $(id).addEventListener
 $('previous').addEventListener('click', () => {state.offset = Math.max(0, state.offset - state.limit); loadFindings().catch(error => toast(error.message));});
 $('next').addEventListener('click', () => {state.offset += state.limit; loadFindings().catch(error => toast(error.message));});
 $('cancel-scan').addEventListener('click', async () => { try { await api('/api/scans/' + state.selected + '/cancel', {method:'POST', body:'{}'}); await refresh(true); } catch (error) { toast(error.message); } });
+$('retry-guest').addEventListener('click', async event => {
+  const button = event.currentTarget; button.disabled = true;
+  try {
+    const source = state.jobs.find(job => job.id === state.selected);
+    const job = await api('/api/scans', {method:'POST', body:JSON.stringify({mode:'guest', name:('Retry · ' + (source?.config.name || 'VM guest scan')).slice(0,100), guest_retry_scan:state.selected, guest_timeout:source?.config.guest_timeout || 180})});
+    state.selected = job.id; state.offset = 0; state.lastState = ''; await refresh(true);
+    toast('Retry queued. Only failed or unsubmitted VMs are targeted; the original report is preserved.');
+  } catch (error) { toast(error.message); } finally { button.disabled = false; }
+});
 $('load-logs').addEventListener('click', async () => { if (!state.selected) return; try { const data = await api('/api/scans/' + state.selected + '/logs'); $('scan-log').textContent = data.text || 'No log output yet.'; $('scan-log').hidden = false; } catch (error) { toast(error.message); } });
 for (const format of ['html','csv']) $('download-' + format).addEventListener('click', async () => { if (!state.selected) return; try { const blob = await api('/api/scans/' + state.selected + '/export/' + format, {download:true}); const url = URL.createObjectURL(blob); const link = el('a'); link.href = url; link.download = 'azure-php-scout-' + state.selected.slice(0,8) + '.' + format; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (error) { toast(error.message); } });
 $('source-mode').addEventListener('change', updateSource); $('port-profile').addEventListener('change', updateProfile);

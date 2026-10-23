@@ -19,7 +19,7 @@ from . import __version__
 from .advisories import catalog
 from .inventory import az_json
 from .jobs import JobManager, summarize
-from .guest import list_vms, script_info, selected_vm_ids
+from .guest import list_vms, script_info, selected_vm_ids, retry_input
 from .scanner import hostname, parse_ports
 
 
@@ -64,9 +64,10 @@ class ScanRequest(BaseModel):
     vm_ids: list[str] = Field(default_factory=list, max_length=50)
     guest_subscription: str | None = None
     guest_all_subscriptions: bool = False
+    guest_retry_scan: str | None = None
     guest_timeout: int = Field(default=180, ge=60, le=1800)
 
-    @field_validator("guest_subscription")
+    @field_validator("guest_subscription", "guest_retry_scan")
     @classmethod
     def guest_subscription_id(cls, value):
         return str(UUID(value)) if value is not None else None
@@ -97,11 +98,11 @@ class ScanRequest(BaseModel):
 
     @model_validator(mode="after")
     def source(self):
-        if self.mode == "guest" and sum((bool(self.vm_ids), bool(self.guest_subscription), self.guest_all_subscriptions)) != 1:
-            raise ValueError("Choose all accessible subscriptions, one guest subscription UUID, or specific VM resource IDs")
-        if self.mode == "guest" and (self.guest_subscription or self.guest_all_subscriptions) and self.subscriptions:
+        if self.mode == "guest" and sum((bool(self.vm_ids), bool(self.guest_subscription), self.guest_all_subscriptions, bool(self.guest_retry_scan))) != 1:
+            raise ValueError("Choose all subscriptions, one subscription, specific VM IDs, or a previous guest scan to retry")
+        if self.mode == "guest" and (self.guest_subscription or self.guest_all_subscriptions or self.guest_retry_scan) and self.subscriptions:
             raise ValueError("Guest subscription scopes cannot be combined with subscription browsing filters")
-        if self.mode != "guest" and (self.vm_ids or self.guest_subscription or self.guest_all_subscriptions):
+        if self.mode != "guest" and (self.vm_ids or self.guest_subscription or self.guest_all_subscriptions or self.guest_retry_scan):
             raise ValueError("Guest subscription and VM resource IDs are only used in guest inspection mode")
         if self.mode == "targets" and not self.targets:
             raise ValueError("Provide at least one target")
@@ -212,6 +213,14 @@ def create_app(data_dir=None, token=None):
     def create_scan(config: ScanRequest):
         if config.mode in ("azure", "guest") and not shutil.which("az"):
             raise HTTPException(503, "Install Azure CLI and run az login, or use an inventory CSV.")
+        if config.guest_retry_scan:
+            parent = job(config.guest_retry_scan)
+            if parent["config"]["mode"] != "guest" or parent["state"] in ("queued", "running", "cancelling"):
+                raise HTTPException(409, "Select a finished VM guest scan to retry")
+            try:
+                retry_input(app.state.jobs.directory(config.guest_retry_scan) / "results.csv")
+            except (ValueError, OSError) as exc:
+                raise HTTPException(409, str(exc)) from exc
         try:
             return public_job(app.state.jobs.create(config.model_dump()))
         except RuntimeError as exc:

@@ -16,6 +16,7 @@ import threading
 from uuid import UUID, uuid4
 
 from .advisories import enrich
+from .guest import retry_candidates
 from .report import endpoint_key, write_html_report
 
 TERMINAL = {"complete", "partial", "failed", "cancelled", "interrupted"}
@@ -39,6 +40,8 @@ def summarize(rows):
         result["verifyVersion"] += row.get("assessment") in ("verify_version", "configuration_only")
     result["guestVms"] = len({row.get("resourceId") for row in rows if row.get("evidenceSource") == "guest"})
     result["guestChecked"] = len({row.get("resourceId") for row in rows if row.get("guestStatus") in ("checked", "incomplete")})
+    result["guestRetryable"] = len(retry_candidates(rows))
+    result["guestTimeouts"] = len({row.get("resourceId") for row in rows if row.get("guestStatus") == "timeout"})
     return result
 
 
@@ -153,7 +156,9 @@ class JobManager:
         if config["mode"] == "guest":
             args = [sys.executable, "-m", "azure_php_scout", "guest", "-o", str(folder / "results.csv"),
                     "--guest-timeout", str(config["guest_timeout"])]
-            if config.get("guest_all_subscriptions"):
+            if config.get("guest_retry_scan"):
+                args.extend(["--retry-from", str(self.directory(config["guest_retry_scan"]) / "results.csv")])
+            elif config.get("guest_all_subscriptions"):
                 args.append("--all-subscriptions")
             elif config.get("guest_subscription"):
                 args.extend(["--subscription", config["guest_subscription"]])

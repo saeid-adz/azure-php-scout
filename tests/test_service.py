@@ -190,6 +190,41 @@ raise SystemExit(run_guest([], 'results.csv', all_subscriptions=True, runner=acc
         coverage = self.client.get(path + '/export/json', headers=AUTH).json()
         self.assertEqual(len(coverage['guest']['subscriptionResults']), 5)
 
+    def test_retry_guest_scan_targets_only_failed_vms_and_preserves_parent(self):
+        fixture = Path(self.directory.name) / 'retry-fixture.py'
+        fixture.write_text('''import sys
+from azure_php_scout.guest import run_guest, GuestCommandError
+sys.path.insert(0, sys.argv[1])
+from test_guest import LINUX, WINDOWS, azure_reader, output
+retry_from = sys.argv[2] or None
+def invoke(identifier, os, timeout, stop):
+    if not retry_from and identifier == LINUX:
+        raise GuestCommandError('AuthorizationFailed: synthetic permission failure')
+    return output(os=os)
+raise SystemExit(run_guest([] if retry_from else [LINUX,WINDOWS], 'results.csv', retry_from=retry_from, runner=azure_reader, invoker=invoke))
+''', encoding='utf-8')
+        manager = self.client.app.state.jobs
+        def command(config, folder):
+            source = str(manager.directory(config['guest_retry_scan']) / 'results.csv') if config.get('guest_retry_scan') else ''
+            return [sys.executable, str(fixture), str(Path(__file__).parent), source]
+        with patch('azure_php_scout.service.shutil.which', return_value='fixture-az'), patch.object(JobManager, 'command', side_effect=command):
+            parent = self.client.post('/api/scans', headers=AUTH, json=dict(mode='guest', vm_ids=[LINUX,WINDOWS])).json()
+            before = self.wait(parent['id'])
+            self.assertEqual(before['summary']['guestRetryable'], 1)
+            path = manager.directory(parent['id']) / 'results.csv'
+            original = path.read_bytes()
+            response = self.client.post('/api/scans', headers=AUTH, json=dict(mode='guest', guest_retry_scan=parent['id']))
+            self.assertEqual(response.status_code, 202, response.text)
+            retried = self.wait(response.json()['id'])
+            self.assertEqual(retried['state'], 'complete', retried)
+            self.assertEqual(retried['summary']['guestVms'], 1)
+            self.assertEqual(retried['summary']['guestChecked'], 1)
+            self.assertEqual(retried['summary']['guestRetryable'], 0)
+            self.assertEqual(path.read_bytes(), original)
+            no_remaining = self.client.post('/api/scans', headers=AUTH, json=dict(mode='guest', guest_retry_scan=retried['id']))
+            self.assertEqual(no_remaining.status_code, 409)
+        self.assertEqual(self.client.post('/api/scans', headers=AUTH, json=dict(mode='guest', guest_retry_scan='../../outside')).status_code, 422)
+
     def test_cancellation_preserves_a_terminal_job(self):
         created = self.client.post("/api/scans", headers=AUTH, json=dict(mode="demo", name="Cancelled demo")).json()
         job = self.wait(created["id"])

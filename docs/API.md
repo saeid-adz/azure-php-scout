@@ -51,6 +51,11 @@ The queue admits up to eight pending/running runs. One run executes at a time.
 Guest mode requires exactly one execution scope: `guest_all_subscriptions=true`
 to automatically refresh and inspect all subscriptions visible to the host CLI,
 `guest_subscription` with one UUID, or `vm_ids` with 1–50 full VM resource IDs.
+Alternatively, supply `guest_retry_scan` with a finished guest scan's UUID. The
+API resolves its saved CSV inside the service data directory; caller-supplied
+file paths are not accepted. Mixed scopes, active/non-guest sources, missing scans,
+and reports with no remaining candidates are rejected. Retry rechecks only saved
+failed/timed-out/cancelled/unsubmitted VMs and preserves the original scan.
 Subscription scopes have no 50-VM limit. Empty/mixed scopes are rejected.
 `subscriptions` is only a browsing filter in the individual-ID workflow and must
 be empty with either subscription execution scope. Guest fields are rejected in
@@ -93,13 +98,28 @@ Or select specific VMs:
 }
 ```
 
+Or retry a finished guest scan:
+
+```json
+{
+  "mode": "guest",
+  "name": "Retry remaining VMs",
+  "guest_retry_scan": "00000000-0000-0000-0000-000000000001"
+}
+```
+
+Summary fields `guestRetryable` and `guestTimeouts` support the retry button.
+`guest.scope=retry` includes the source filename/scan UUID, `retrySourceVms`, and
+`retryExcluded`. Retry reports contain only the new attempt. Sign-in expiry sets
+`guest.authenticationRequired=true` and leaves later VMs as `not_submitted`.
+
 Guest rows include `evidenceSource=guest`, `guestStatus`, `guestSource`,
 `guestPath`, `guestPackage`, `guestPackageVersion`, `guestProcessObserved`,
 `guestCoverage`, and `guestScriptSha256`. Guest records have no HTTP URL/port.
 Summary fields `guestVms` and `guestChecked` count unique VMs separately from
 software records and HTTP response counts. Coverage has `scanType=guest`,
 `guest` progress counters, and `remoteMayContinue` for uncertain remote execution.
-`guest.scope` is `all_subscriptions`, `subscription`, or `vms`; single-subscription scope adds `subscriptionId`,
+`guest.scope` is `all_subscriptions`, `subscription`, `vms`, or `retry`; single-subscription scope adds `subscriptionId`,
 `subscriptionName` (when VMs were found), and `discoveryStatus`. `guest.notSubmitted`
 counts VMs left after cancellation; their rows use `guestStatus=not_submitted`.
 Stopped/unready VMs have `guestStatus=skipped` and remain in the same report.

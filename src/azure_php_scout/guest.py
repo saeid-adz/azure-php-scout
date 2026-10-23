@@ -33,6 +33,41 @@ VM_QUERY = """Resources
 | order by id asc"""
 COMMANDS = {"Linux": ("RunShellScript", "inspect-linux.sh"),
             "Windows": ("RunPowerShellScript", "inspect-windows.ps1")}
+RETRY_STATUSES = {"failed", "timeout", "cancelled", "not_submitted"}
+
+
+def retry_candidates(rows):
+    """Select failed VMs once, preserving any already inspected or skipped VM."""
+    candidates, completed = {}, set()
+    for row in rows:
+        if row.get("evidenceSource") != "guest" or not row.get("resourceId"):
+            continue
+        identifier = row["resourceId"].casefold()
+        if row.get("guestStatus") in RETRY_STATUSES:
+            candidates[identifier] = row["resourceId"]
+        else:
+            completed.add(identifier)
+    return [value for key, value in candidates.items() if key not in completed]
+
+
+def retry_input(source):
+    with Path(source).open(newline="", encoding="utf-8-sig") as stream:
+        reader = csv.DictReader(stream)
+        if not {"evidenceSource", "resourceId", "guestStatus"}.issubset(reader.fieldnames or []):
+            raise ValueError("Retry source must be a VM guest results CSV")
+        rows = list(reader)
+    if any(row.get("evidenceSource") != "guest" for row in rows):
+        raise ValueError("Retry source contains non-guest results")
+    identifiers = [vm_id(value) for value in retry_candidates(rows)]
+    if not identifiers:
+        raise ValueError("No failed, timed-out, cancelled, or unsubmitted VMs remain in this report")
+    metadata = {vm_id(row["resourceId"]).casefold(): row for row in rows}
+    return identifiers, metadata
+
+
+def authentication_required(message):
+    message = str(message).casefold()
+    return any(marker in message for marker in ("aadsts", "az login", "interactive authentication", "expiredauthenticationtoken"))
 
 
 def vm_id(value):
@@ -382,7 +417,14 @@ def save_results(destination, rows, scope):
     write_html_report(destination.with_suffix(".html"), rows, status=scope["scanStatus"], scope=scope)
 
 
-def run_guest(vm_ids, destination, *, subscription=None, all_subscriptions=False, timeout=180, stop=None, runner=az_json, invoker=invoke, progress=None):
+def run_guest(vm_ids, destination, *, subscription=None, all_subscriptions=False, retry_from=None, timeout=180, stop=None, runner=az_json, invoker=invoke, progress=None):
+    retry_metadata = {}
+    if retry_from is not None:
+        if subscription is not None or all_subscriptions or vm_ids:
+            raise ValueError("Choose a retry source or a new inspection scope, not both")
+        if Path(retry_from).resolve() == Path(destination).resolve():
+            raise ValueError("Retry output must differ from the original report")
+        vm_ids, retry_metadata = retry_input(retry_from)
     if all_subscriptions and (subscription is not None or vm_ids):
         raise ValueError("Choose all subscriptions, one subscription, or specific VM IDs")
     if subscription is not None:
@@ -390,20 +432,27 @@ def run_guest(vm_ids, destination, *, subscription=None, all_subscriptions=False
         if vm_ids:
             raise ValueError("Choose one subscription or specific VM IDs, not both")
         vm_ids = []
-    elif not all_subscriptions:
+    elif not all_subscriptions and retry_from is None:
         vm_ids = selected_vm_ids(vm_ids)
-    else:
+    elif retry_from is None:
         vm_ids = []
     stop = stop or threading.Event()
     rows = []
     scope = dict(scanType="guest", source="Azure VM Run Command", resources=dict(vm=len(vm_ids)),
                  subscriptions=1 if subscription else len({item.split('/')[2] for item in vm_ids}), errors=[], skipped=[],
                  scanStatus="running", remoteMayContinue=False,
-                 guest=dict(scope="all_subscriptions" if all_subscriptions else "subscription" if subscription else "vms", subscriptionId=subscription,
+                 guest=dict(scope="retry" if retry_from is not None else "all_subscriptions" if all_subscriptions else "subscription" if subscription else "vms", subscriptionId=subscription,
                             discoveryStatus="pending" if subscription or all_subscriptions else "not_required",
                             requested=len(vm_ids), checked=0, failed=0, skipped=0, completed=0, notSubmitted=0))
+    if retry_from is not None:
+        try:
+            retry_source_name = str(UUID(Path(retry_from).parent.name))
+        except ValueError:
+            retry_source_name = Path(retry_from).name
+        scope["guest"].update(retrySource=retry_source_name, retrySourceVms=len(retry_metadata),
+                              retryExcluded=len(retry_metadata) - len(vm_ids))
     save_results(destination, rows, scope)
-    machines = {}
+    machines = retry_metadata
     subscription_results = {}
     if all_subscriptions:
         if progress:
@@ -448,9 +497,9 @@ def run_guest(vm_ids, destination, *, subscription=None, all_subscriptions=False
             return 130 if stop.is_set() else 1
         save_results(destination, rows, scope)
     for resource_id in vm_ids:
-        if stop.is_set():
+        if stop.is_set() or scope["guest"].get("authenticationRequired"):
             rows.append(enrich(dict(base_row(resource_id, machines.get(resource_id.casefold())),
-                                    guestStatus="not_submitted", note="Inspection stopped before this VM was submitted.")))
+                                    guestStatus="not_submitted", note="Azure CLI sign-in required; no command submitted." if scope["guest"].get("authenticationRequired") else "Inspection stopped before this VM was submitted.")))
             scope["guest"]["notSubmitted"] += 1
             if resource_id.split("/")[2] in subscription_results:
                 subscription_results[resource_id.split("/")[2]]["notSubmitted"] += 1
@@ -484,6 +533,12 @@ def run_guest(vm_ids, destination, *, subscription=None, all_subscriptions=False
             scope["errors"].append("{}: {}".format(resource_id, findings[0].get("note") or findings[0].get("guestCoverage") or state))
         if state == "skipped":
             scope["skipped"].append(dict(vm=findings[0]["vm"], resourceId=resource_id, reason=findings[0]["note"]))
+        if state == "failed" and authentication_required(findings[0].get("note", "")):
+            scope["guest"]["authenticationRequired"] = True
+            message = "Azure CLI sign-in is required. Run az login on the service host, then retry the remaining VMs. Further commands were not submitted."
+            scope["errors"].append(message)
+            if progress:
+                progress(message)
         save_results(destination, rows, scope)
     scope["guest"].pop("currentVm", None)
     if stop.is_set():
@@ -499,6 +554,7 @@ def main(argv=None):
     selection.add_argument("--vm-id", action="append", help="complete VM resource ID; repeat for up to 50 selected VMs")
     selection.add_argument("--subscription", help="inspect every VM in this one subscription UUID, with or without a public IP")
     selection.add_argument("--all-subscriptions", action="store_true", help="automatically discover all subscriptions available to Azure CLI and inspect their Windows/Linux VMs")
+    selection.add_argument("--retry-from", help="retry only failed/timed-out/cancelled/unsubmitted VMs from a guest results CSV, without the 50-VM limit; preserves the original report")
     parser.add_argument("--guest-timeout", type=int, default=180, help="seconds to wait per VM (60–1800); remote scripts cannot be cancelled")
     parser.add_argument("--dry-run", action="store_true", help="read selected VM metadata and print the plan without executing guest commands")
     parser.add_argument("-o", "--output", default="guest-results.csv")
@@ -513,6 +569,11 @@ def main(argv=None):
             raise ValueError("Guest output must use a .csv filename")
         if args.dry_run:
             plan = []
+            if args.retry_from:
+                identifiers, metadata = retry_input(args.retry_from)
+                print(json.dumps([dict(resourceId=value, previousStatus=metadata[value.casefold()]["guestStatus"],
+                                       os=metadata[value.casefold()].get("os", "unknown")) for value in identifiers], indent=2))
+                return 0
             if args.all_subscriptions:
                 inventory = all_subscription_vms(runner=az_json)
                 for vm in inventory["vms"]:
@@ -532,7 +593,7 @@ def main(argv=None):
         for sig in (signal.SIGINT, signal.SIGTERM):
             previous[sig] = signal.signal(sig, lambda *_args: stop.set())
         try:
-            return run_guest(ids, destination, subscription=subscription, all_subscriptions=args.all_subscriptions, timeout=args.guest_timeout, stop=stop,
+            return run_guest(ids, destination, subscription=subscription, all_subscriptions=args.all_subscriptions, retry_from=args.retry_from, timeout=args.guest_timeout, stop=stop,
                              progress=lambda message: print(message, file=sys.stderr, flush=True))
         finally:
             for sig, handler in previous.items():
