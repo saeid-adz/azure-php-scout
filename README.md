@@ -1,8 +1,8 @@
 # Azure PHP Scout
 
-Find Azure services that may need a PHP security update. Azure PHP Scout combines
-read-only Azure inventory, TCP/HTTP discovery, and source-linked PHP version
-assessment in a self-hosted dashboard and CLI.
+Find Azure services that may need a PHP or NGINX security update. Azure PHP Scout
+combines read-only Azure inventory, TCP/HTTP discovery, and source-linked PHP and
+NGINX version assessment in a self-hosted dashboard and CLI.
 
 [![CI](https://github.com/saeid-adz/azure-php-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/saeid-adz/azure-php-scout/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -18,7 +18,9 @@ assessment in a self-hosted dashboard and CLI.
   Managed applications are checked on their default/custom hostnames on 80/443.
 - Identifies PHP/WordPress signatures and keeps runtime evidence separate from
   Azure configuration settings.
-- Prioritizes potentially affected PHP versions, upstream end-of-life branches,
+- Identifies NGINX and whether it negotiates HTTP/2, and checks it against the
+  tracked NGINX HTTP/2 advisories. Choose PHP, NGINX, or both per scan.
+- Prioritizes potentially affected PHP and NGINX versions, upstream end-of-life branches,
   and services whose runtime version needs verification.
 - Runs scans in a persistent, cancellable queue with live coverage, history,
   isolated artifacts, and offline HTML/CSV/JSON exports.
@@ -26,9 +28,10 @@ assessment in a self-hosted dashboard and CLI.
   subscriptions, one selected subscription, or specific VMs, including
   private VMs, using fixed Azure Run Command scripts.
 
-The bundled catalog was reviewed on **21 October 2026** and tracks
-**CVE-2026-109618** and **CVE-2026-109619**. It is deliberately scoped to those two
-PHP core advisories; it is not a complete vulnerability database. A version match
+The bundled catalog tracks **CVE-2026-109618** and **CVE-2026-109619** (PHP core,
+reviewed 21 October 2026) and **CVE-2026-123633** and **CVE-2026-123007** (NGINX
+HTTP/2, reviewed 19 November 2026). It is deliberately scoped to those advisories;
+it is not a complete vulnerability database. A version match
 is a triage finding. Verify the serving runtime, deployment conditions, package
 build, and vendor backports before deciding a service's actual patch status.
 
