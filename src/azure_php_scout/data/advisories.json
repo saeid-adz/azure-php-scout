@@ -11,7 +11,12 @@
       "cvss": 9.2,
       "published": "2026-10-21",
       "url": "https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w",
-      "fixed": {"8.2": "8.2.35", "8.3": "8.3.36", "8.4": "8.4.27", "8.5": "8.5.12"}
+      "fixed": {
+        "8.2": "8.2.35",
+        "8.3": "8.3.36",
+        "8.4": "8.4.27",
+        "8.5": "8.5.12"
+      }
     },
     {
       "id": "CVE-2026-109619",
@@ -20,16 +25,84 @@
       "cvss": 9.2,
       "published": "2026-10-21",
       "url": "https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp",
-      "fixed": {"8.2": "8.2.35", "8.3": "8.3.36", "8.4": "8.4.27", "8.5": "8.5.12"}
+      "fixed": {
+        "8.2": "8.2.35",
+        "8.3": "8.3.36",
+        "8.4": "8.4.27",
+        "8.5": "8.5.12"
+      }
     }
   ],
   "lifecycle_source": "https://www.php.net/supported-versions.php",
   "lifecycle": {
-    "8.2": {"active_until": "2024-12-31", "security_until": "2026-12-31"},
-    "8.3": {"active_until": "2025-12-31", "security_until": "2027-12-31"},
-    "8.4": {"active_until": "2026-12-31", "security_until": "2028-12-31"},
-    "8.5": {"active_until": "2027-12-31", "security_until": "2029-12-31"}
+    "8.2": {
+      "active_until": "2024-12-31",
+      "security_until": "2026-12-31"
+    },
+    "8.3": {
+      "active_until": "2025-12-31",
+      "security_until": "2027-12-31"
+    },
+    "8.4": {
+      "active_until": "2026-12-31",
+      "security_until": "2028-12-31"
+    },
+    "8.5": {
+      "active_until": "2027-12-31",
+      "security_until": "2029-12-31"
+    }
   },
   "legacy_eol_before": "8.2.0",
-  "legacy_source": "https://www.php.net/eol.php"
+  "legacy_source": "https://www.php.net/eol.php",
+  "nginx": {
+    "reviewed_at": "2026-11-19",
+    "scope": "Two NGINX client-facing HTTP/2 advisories (CVE-2026-123633, CVE-2026-123007) as summarized by CyberSecurityNews; F5 advisories K000163928 and K000164058 were not independently retrieved. This is not an exhaustive NGINX vulnerability database.",
+    "announcement": "https://cybersecuritynews.com/nginx-http-2-vulnerabilities/",
+    "advisories": [
+      {
+        "id": "CVE-2026-123633",
+        "title": "Use-after-free in client-facing HTTP/2 handling",
+        "severity": "critical",
+        "cvss": 9.2,
+        "url": "https://my.f5.com/manage/s/article/K000163928",
+        "ranges": [
+          [
+            "1.19.7",
+            "1.30.6"
+          ],
+          [
+            "1.31.0",
+            "1.31.8"
+          ]
+        ],
+        "fixed": {
+          "1.30": "1.30.7",
+          "1.31": "1.31.9"
+        },
+        "condition": "Client-facing HTTP/2, proxying to a backend, and a worker low on available connections."
+      },
+      {
+        "id": "CVE-2026-123007",
+        "title": "Remote code execution in client-facing HTTP/2 handling",
+        "severity": "critical",
+        "cvss": 9.2,
+        "url": "https://my.f5.com/manage/s/article/K000164058",
+        "ranges": [
+          [
+            "1.9.5",
+            "1.30.6"
+          ],
+          [
+            "1.31.0",
+            "1.31.8"
+          ]
+        ],
+        "fixed": {
+          "1.30": "1.30.7",
+          "1.31": "1.31.9"
+        },
+        "condition": "Client-facing HTTP/2; reported to affect servers that only serve static files."
+      }
+    ]
+  }
 }

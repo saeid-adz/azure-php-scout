@@ -9,7 +9,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from azure_php_scout.jobs import JobManager
-from azure_php_scout.service import create_app, service_token
+from azure_php_scout.service import ScanRequest, create_app, service_token
 from test_web_scan import local_server
 from test_guest import LINUX, WINDOWS, SUBSCRIPTION, azure_reader, output
 
@@ -52,11 +52,14 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(job["summary"]["potentiallyAffected"], 1)
         self.assertEqual(job["summary"]["endOfLife"], 1)
         self.assertEqual(job["summary"]["verifyVersion"], 2)
-        self.assertEqual(job["summary"]["endpoints"], 6)
+        self.assertEqual(job["summary"]["endpoints"], 8)
+        self.assertEqual(job["summary"]["nginx"], 2)
+        self.assertEqual(job["summary"]["nginxPotentiallyAffected"], 1)
         path = "/api/scans/" + job["id"]
         filtered = self.client.get(path + "/results?assessment=potentially_affected", headers=AUTH).json()
-        self.assertEqual(filtered["total"], 1)
-        self.assertIn("CVE-2026-109618", filtered["rows"][0]["cves"])
+        self.assertEqual(filtered["total"], 2)
+        self.assertEqual({row["cves"] or row["nginxCves"] for row in filtered["rows"]},
+                         {"CVE-2026-109618, CVE-2026-109619", "CVE-2026-123633, CVE-2026-123007"})
         for format in ("csv", "html", "json"):
             export = self.client.get(path + "/export/" + format, headers=AUTH)
             self.assertEqual(export.status_code, 200)
@@ -88,6 +91,20 @@ class ServiceTests(unittest.TestCase):
     def test_service_lock_prevents_two_workers_owning_one_data_directory(self):
         with self.assertRaises(RuntimeError):
             JobManager(self.directory.name)
+
+    def test_stack_selection_is_validated_and_forwarded_to_the_scanner(self):
+        self.assertEqual(ScanRequest(mode="targets", targets=["192.0.2.1"]).stack, "both")
+        with self.assertRaises(ValueError):
+            ScanRequest(mode="targets", targets=["192.0.2.1"], stack="apache")
+        with self.assertRaises(ValueError):
+            ScanRequest(mode="guest", vm_ids=[], guest_all_subscriptions=True, stack="nginx")
+        self.assertEqual(ScanRequest(mode="guest", guest_all_subscriptions=True).stack, "php")
+        manager = self.client.app.state.jobs
+        for stack in ("php", "nginx", "both"):
+            with self.subTest(stack=stack):
+                config = ScanRequest(mode="targets", targets=["192.0.2.1"], stack=stack).model_dump()
+                command = manager.command(config, Path(self.directory.name))
+                self.assertEqual(command[command.index("--stack") + 1], stack)
 
     def test_guest_api_protects_scripts_and_lists_private_vms(self):
         self.assertEqual(self.client.get('/api/guest/scripts/Linux').status_code, 401)

@@ -6,6 +6,7 @@ import json
 import re
 
 ASSESSMENT_FIELDS = ["assessment", "riskLevel", "cves", "assessmentBasis", "remediation", "phpSupport", "advisoryReviewedAt"]
+NGINX_FIELDS = ["nginxAssessment", "nginxRiskLevel", "nginxCves", "nginxBasis", "nginxRemediation"]
 
 
 @lru_cache(maxsize=1)
@@ -103,6 +104,58 @@ def assess(row, *, as_of=None, rules=None):
     return result
 
 
+def parse_nginx_version(value):
+    """NGINX versions are MAJOR.MINOR.PATCH; vendor suffixes such as '(Ubuntu)' are handled by the caller."""
+    match = re.fullmatch(r"(?:nginx/)?(\d+)\.(\d+)\.(\d+)", str(value or "").strip(), re.I)
+    return tuple(map(int, match.groups())) if match else None
+
+
+def assess_nginx(row, *, rules=None):
+    """Conservative NGINX HTTP/2 assessment from the observed Server version and negotiated protocol."""
+    rules = rules or catalog()["nginx"]
+    result = dict(nginxAssessment="undetermined", nginxRiskLevel="info", nginxCves="", matches=[],
+                  nginxBasis="No NGINX signal was observed.", nginxRemediation="")
+    state = row.get("nginx")
+    if state not in ("yes", "probable"):
+        return result
+    result.update(nginxAssessment="verify_version", nginxRiskLevel="medium",
+                  nginxBasis="NGINX was detected without a version. Version hiding (server_tokens off) is common.",
+                  nginxRemediation="Confirm the running NGINX binary version on the host and that it includes the HTTP/2 fixes. Restart the service after upgrading; a reload does not replace the binary.")
+    version = parse_nginx_version(row.get("nginxVersion"))
+    if row.get("nginxVersion") and version is None:
+        result["nginxBasis"] = "The reported NGINX version is incomplete or not a plain MAJOR.MINOR.PATCH value."
+        return result
+    if version is None:
+        return result
+    for advisory in rules["advisories"]:
+        if any(tuple(map(int, low.split("."))) <= version <= tuple(map(int, high.split(".")))
+               for low, high in advisory["ranges"]):
+            result["matches"].append(dict(id=advisory["id"], title=advisory["title"], severity=advisory["severity"],
+                                          fixedVersion=advisory["fixed"].get("{}.{}".format(*version[:2])) or min(advisory["fixed"].values()),
+                                          url=advisory["url"]))
+    http2 = row.get("http2")
+    if not result["matches"]:
+        result.update(nginxAssessment="no_catalog_match", nginxRiskLevel="info",
+                      nginxBasis="The reported NGINX version is outside the ranges in this catalog. This does not establish that the service is free of vulnerabilities.",
+                      nginxRemediation="Continue checking current F5/NGINX security advisories.")
+        return result
+    fixed = result["matches"][0]["fixedVersion"]
+    result["nginxCves"] = ", ".join(match["id"] for match in result["matches"])
+    if http2 == "yes":
+        result.update(nginxAssessment="potentially_affected", nginxRiskLevel="critical",
+                      nginxBasis="The reported NGINX version is within tracked advisory ranges and the endpoint negotiated HTTP/2. Exploitability and vendor backports require verification.")
+    else:
+        result.update(nginxAssessment="verify_http2", nginxRiskLevel="high",
+                      nginxBasis="The reported NGINX version is within tracked advisory ranges. HTTP/2 was {} on this endpoint; other listeners or ports on the same server may accept HTTP/2.".format(
+                          "not negotiated" if http2 == "no" else "not confirmed"))
+    if "(" in str(row.get("server", "")) or re.search(r"[-+~]", str(row.get("nginxVersion", ""))):
+        result["nginxBasis"] += " A distribution build was reported; upstream numbers cannot establish backport status."
+    result["nginxRemediation"] = ("Upgrade NGINX to {} or later (or a vendor-confirmed backport), then restart the service or redeploy containers; a reload does not replace the running binary. "
+                                  "Until patched, disabling client-facing HTTP/2 on affected listeners reduces exposure.").format(fixed)
+    return result
+
+
 def enrich(row, **kwargs):
     assessment = assess(row, **kwargs)
-    return dict(row, **{key: assessment[key] for key in ASSESSMENT_FIELDS})
+    nginx = assess_nginx(row)
+    return dict(row, **{key: assessment[key] for key in ASSESSMENT_FIELDS}, **{key: nginx[key] for key in NGINX_FIELDS})

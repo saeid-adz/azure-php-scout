@@ -1,7 +1,7 @@
 from datetime import date
 import unittest
 
-from azure_php_scout.advisories import assess, parse_version
+from azure_php_scout.advisories import assess, assess_nginx, enrich, parse_nginx_version, parse_version
 
 
 class AdvisoryTests(unittest.TestCase):
@@ -71,3 +71,49 @@ class AdvisoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NginxAdvisoryTests(unittest.TestCase):
+    def assessment(self, version, http2="yes", **extra):
+        return assess_nginx(dict(nginx="yes", nginxVersion=version, http2=http2, **extra))
+
+    def test_range_boundaries_and_fixed_releases(self):
+        for version in ("1.19.7", "1.24.0", "1.30.6", "1.31.0", "1.31.8"):
+            with self.subTest(version=version):
+                result = self.assessment(version)
+                self.assertEqual(result["nginxAssessment"], "potentially_affected")
+                self.assertEqual(result["nginxRiskLevel"], "critical")
+        for version in ("1.30.7", "1.31.9", "1.32.0"):
+            with self.subTest(version=version):
+                self.assertEqual(self.assessment(version)["nginxAssessment"], "no_catalog_match")
+
+    def test_each_cve_has_its_own_lower_bound(self):
+        self.assertEqual(self.assessment("1.12.0")["nginxCves"], "CVE-2026-123007")
+        self.assertEqual(self.assessment("1.19.6")["nginxCves"], "CVE-2026-123007")
+        self.assertEqual(self.assessment("1.19.7")["nginxCves"], "CVE-2026-123633, CVE-2026-123007")
+        self.assertEqual(self.assessment("1.9.4")["nginxAssessment"], "no_catalog_match")
+
+    def test_fixed_version_matches_branch(self):
+        self.assertEqual(self.assessment("1.31.3")["matches"][0]["fixedVersion"], "1.31.9")
+        self.assertEqual(self.assessment("1.30.2")["matches"][0]["fixedVersion"], "1.30.7")
+        self.assertEqual(self.assessment("1.24.0")["matches"][0]["fixedVersion"], "1.30.7")
+
+    def test_http2_not_confirmed_lowers_certainty_not_visibility(self):
+        for http2 in ("no", "unknown"):
+            result = self.assessment("1.30.6", http2=http2)
+            self.assertEqual((result["nginxAssessment"], result["nginxRiskLevel"]), ("verify_http2", "high"))
+            self.assertIn("1.30.7", result["nginxRemediation"])
+
+    def test_hidden_or_malformed_version_needs_verification(self):
+        self.assertEqual(self.assessment("")["nginxAssessment"], "verify_version")
+        self.assertEqual(self.assessment("1.30")["nginxAssessment"], "verify_version")
+        self.assertIsNone(parse_nginx_version("1.30"))
+
+    def test_no_signal_and_distribution_build(self):
+        self.assertEqual(assess_nginx(dict(nginx="unknown", nginxVersion="1.24.0"))["nginxAssessment"], "undetermined")
+        self.assertIn("distribution build", self.assessment("1.24.0", server="nginx/1.24.0 (Ubuntu)")["nginxBasis"])
+
+    def test_enrich_keeps_php_and_nginx_assessments_independent(self):
+        row = enrich(dict(php="yes", phpVersion="8.3.35", nginx="yes", nginxVersion="1.30.6", http2="yes"))
+        self.assertEqual((row["assessment"], row["nginxAssessment"]), ("potentially_affected", "potentially_affected"))
+        self.assertEqual(enrich(dict(php="yes", phpVersion="8.3.36"))["nginxAssessment"], "undetermined")

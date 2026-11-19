@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import queue
 import re
+import socket
 import ssl
 import sys
 import threading
@@ -24,7 +25,7 @@ import zlib
 from .report import clean_text, csv_cell, write_html_report
 from .inventory import discover_azure
 from .discovery import WEB_PORTS, TLS_PORTS, discover_open_ports
-from .advisories import ASSESSMENT_FIELDS, enrich
+from .advisories import ASSESSMENT_FIELDS, NGINX_FIELDS, enrich
 from . import __version__
 
 MAX_BODY = 300_000
@@ -35,7 +36,7 @@ META_FIELDS = ["subscription", "resourceGroup", "vm", "os", "powerState", "vmId"
                "inventoryNote", "resourceType", "resourceId", "subscriptionId", "publicNetworkAccess"]
 FIELDS = META_FIELDS + ["target", "hostname", "port", "url", "finalUrl", "reachable",
                         "httpStatus", "server", "title", "php", "phpVersion",
-                        "wordpress", "wordpressVersion", "evidence", "requests", "note", "tcpOpen", "service", "phpVersions"] + ASSESSMENT_FIELDS
+                        "wordpress", "wordpressVersion", "evidence", "requests", "note", "tcpOpen", "service", "phpVersions", "stack", "nginx", "nginxVersion", "http2"] + ASSESSMENT_FIELDS + NGINX_FIELDS
 
 
 def hostname(value):
@@ -278,9 +279,16 @@ def local_link(base, link):
     return None
 
 
+STACKS = ("php", "nginx", "both")
+NGINX_VERSION = r"\bnginx(?:/(\d+\.\d+\.\d+))?(?![\w-])"
+
+
 class Findings:
-    def __init__(self):
-        self.php = self.wordpress = "unknown"
+    def __init__(self, stack="both"):
+        self.php_enabled = stack in ("php", "both")
+        self.nginx_enabled = stack in ("nginx", "both")
+        self.php = self.wordpress = self.nginx = "unknown"
+        self.nginx_version = ""
         self.php_version = self.wp_version = ""
         self.php_versions = set()
         self.evidence = []
@@ -293,9 +301,27 @@ class Findings:
         if evidence not in self.evidence:
             self.evidence.append(evidence)
 
+    def inspect_nginx(self, response):
+        server = response.header("server")
+        match = re.search(r"(?<![\w/-])" + NGINX_VERSION, server, re.I)
+        if match:
+            self.mark("nginx", "yes", "nginx reported in Server header", response)
+            self.nginx_version = self.nginx_version or match.group(1) or ""
+        elif re.search(r"(?<![\w/-])openresty\b", server, re.I):
+            self.mark("nginx", "probable", "OpenResty (NGINX-based) reported in Server header; NGINX version not reported", response)
+        elif response.status >= 400:
+            error = re.search(r"<center>\s*" + NGINX_VERSION + r"\s*</center>", response.body[:4096], re.I)
+            if error:
+                self.mark("nginx", "yes", "nginx default error page", response)
+                self.nginx_version = self.nginx_version or error.group(1) or ""
+
     def inspect(self, response, probe=False):
         previous_evidence = len(self.evidence)
         page = Page(response.body)
+        if self.nginx_enabled:
+            self.inspect_nginx(response)
+        if not self.php_enabled:
+            return page
         powered = response.header("x-powered-by") + " " + response.header("server")
         match = re.search(r"\bPHP(?:/([\d]+(?:\.[\d]+){0,3}[\w.+-]*))?\b", powered, re.I)
         if match:
@@ -365,7 +391,23 @@ def probe_urls(response, page):
     return [urljoin(base, "wp-json/"), base + "?rest_route=/", urljoin(base, "wp-login.php")]
 
 
+def negotiated_http2(target, port, options):
+    """Return yes/no/unknown from one TLS ALPN handshake; no application request is sent."""
+    context = ssl.create_default_context()
+    if not options.verify_tls:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    context.set_alpn_protocols(["h2", "http/1.1"])
+    try:
+        with socket.create_connection((target.address, port), timeout=options.timeout) as raw:
+            with context.wrap_socket(raw, server_hostname=hostname(target.host)) as tls:
+                return "yes" if tls.selected_alpn_protocol() == "h2" else "no"
+    except (OSError, ValueError):
+        return "unknown"
+
+
 def scan(target, port, options, stop, tcp_open=False):
+    stack = getattr(options, "stack", "both")
     client = Client(target, options, stop)
     url = make_url(target.host, port, port in options.tls_ports)
     result = client.fetch(url)
@@ -376,12 +418,12 @@ def scan(target, port, options, stop, tcp_open=False):
             result, url = fallback, fallback_url
         else:
             result.notes.extend(fallback.notes)
-    findings = Findings()
+    findings = Findings(stack)
     page = None
     for response in result.responses:
         page = findings.inspect(response)
     root = result.last
-    if root and not options.no_probes and findings.wordpress != "yes":
+    if root and not options.no_probes and findings.php_enabled and findings.wordpress != "yes":
         for probe_url in probe_urls(root, page):
             if stop.is_set():
                 break
@@ -401,7 +443,10 @@ def scan(target, port, options, stop, tcp_open=False):
            "note": "; ".join(dict.fromkeys(result.notes)),
            "tcpOpen": "yes" if tcp_open or root else "unknown",
            "service": urlsplit(root.url).scheme if root else "unidentified TCP" if tcp_open else "unknown",
-           "phpVersions": ",".join(sorted(findings.php_versions))}
+           "phpVersions": ",".join(sorted(findings.php_versions)),
+           "stack": stack, "nginx": findings.nginx, "nginxVersion": findings.nginx_version, "http2": "unknown"}
+    if root and findings.nginx != "unknown" and urlsplit(root.url).scheme == "https":
+        row["http2"] = negotiated_http2(target, urlsplit(root.url).port or 443, options)
     if root and urlsplit(root.url).hostname != target.host:
         row["note"] += ("; " if row["note"] else "") + "redirect hostname tested on original target address"
     return row
@@ -577,7 +622,7 @@ def execute_scan(targets, options, scope, html_path):
             by_address.setdefault(target.address, []).append(target)
         else:
             direct.append(target)
-    scope.update(vmPortScope=options.vm_ports_label if options.ports is None else "Explicit ports (no TCP sweep)",
+    scope.update(stack=getattr(options, "stack", "both"), vmPortScope=options.vm_ports_label if options.ports is None else "Explicit ports (no TCP sweep)",
                  vmPortsPerAddress=len(options.vm_ports) if options.ports is None else len(options.ports),
                  appPorts=list(options.ports or options.app_ports),
                  selectedTargets=len(targets), vmAddresses=len(by_address),
@@ -611,7 +656,7 @@ def execute_scan(targets, options, scope, html_path):
         finally:
             events.put(("finished", None))
 
-    completed = responded = php = wordpress = 0
+    completed = responded = php = wordpress = nginx = 0
     active, finished = 0, False
     report_status, exit_code = "running", 0
     last_report, last_progress = 0, 0
@@ -657,9 +702,10 @@ def execute_scan(targets, options, scope, html_path):
                     responded += row["reachable"] == "yes"
                     php += row["php"] != "unknown"
                     wordpress += row["wordpress"] != "unknown"
-                    print("[HTTP {}] {}:{} HTTP={} PHP={} WordPress={}".format(
+                    nginx += row["nginx"] != "unknown"
+                    print("[HTTP {}] {}:{} HTTP={} PHP={} WordPress={} NGINX={}".format(
                           completed, row["target"], row["port"], row["httpStatus"] or "-",
-                          row["php"], row["wordpress"]), file=sys.stderr)
+                          row["php"], row["wordpress"], row["nginx"]), file=sys.stderr)
                 elif event == "progress":
                     scope["tcp"] = payload
                     if time.monotonic() - last_progress >= 10 or payload["checked"] == payload["total"]:
@@ -694,8 +740,8 @@ def execute_scan(targets, options, scope, html_path):
         except OSError as exc:
             print("Cannot save report: {}".format(exc), file=sys.stderr)
             exit_code = exit_code or 1
-    print("{}: {} HTTP checks, {} responses, {} PHP signals, {} WordPress signals. HTML: {}".format(
-          report_status, completed, responded, php, wordpress, html_path or "disabled"), file=sys.stderr)
+    print("{}: {} HTTP checks, {} responses, {} PHP signals, {} WordPress signals, {} NGINX signals. HTML: {}".format(
+          report_status, completed, responded, php, wordpress, nginx, html_path or "disabled"), file=sys.stderr)
     return exit_code
 
 
@@ -725,6 +771,7 @@ def main(argv=None):
     parser.add_argument("--workers", type=positive_int, default=10, help="concurrent endpoint scans (default: 10)")
     parser.add_argument("--max-redirects", type=int, choices=range(0, 11), default=5, metavar="0..10")
     parser.add_argument("--running-only", action="store_true", help="include only CSV rows marked running")
+    parser.add_argument("--stack", choices=STACKS, default="both", help="technology to detect: php (PHP/WordPress), nginx (NGINX + HTTP/2 advisories), or both (default)")
     parser.add_argument("--no-probes", action="store_true", help="only request / and follow its redirects")
     parser.add_argument("--verify-tls", action="store_true", help="require a trusted TLS certificate matching the hostname")
     parser.add_argument("--dry-run", action="store_true", help="validate input and show counts without requests or output")

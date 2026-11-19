@@ -296,6 +296,45 @@ def local_server(routes, fallback=(404, {}, "Not found"), context=None):
         worker.join()
 
 
+class NginxStackTests(unittest.TestCase):
+    def scan(self, server, stack, **overrides):
+        settings = options(ports=[server.server_port], stack=stack, **overrides)
+        return scanner.scan(scanner.Target("127.0.0.1", "127.0.0.1"), server.server_port,
+                            settings, threading.Event())
+
+    def test_server_header_version_and_default_error_page(self):
+        findings = scanner.Findings("nginx")
+        findings.inspect(response(headers={"server": ["nginx/1.30.6 (Ubuntu)"]}))
+        self.assertEqual((findings.nginx, findings.nginx_version), ("yes", "1.30.6"))
+        hidden = scanner.Findings("nginx")
+        hidden.inspect(response(status=404, body="<html><center><h1>404</h1></center><hr><center>nginx</center></html>"))
+        self.assertEqual((hidden.nginx, hidden.nginx_version), ("yes", ""))
+        openresty = scanner.Findings("nginx")
+        openresty.inspect(response(headers={"server": ["openresty/1.27.1.1"]}))
+        self.assertEqual((openresty.nginx, openresty.nginx_version), ("probable", ""))
+        self.assertEqual(scanner.Findings("nginx").nginx, "unknown")
+
+    def test_stack_switch_limits_detection(self):
+        headers = {"Server": "nginx/1.30.6", "X-Powered-By": "PHP/8.3.1"}
+        with local_server({"/": (200, headers, "<title>Both</title>")}) as server:
+            only_php = self.scan(server, "php")
+            only_nginx = self.scan(server, "nginx")
+            both = self.scan(server, "both")
+        self.assertEqual((only_php["php"], only_php["nginx"]), ("yes", "unknown"))
+        self.assertEqual((only_nginx["php"], only_nginx["nginx"], only_nginx["nginxVersion"]), ("unknown", "yes", "1.30.6"))
+        self.assertEqual((both["php"], both["nginx"]), ("yes", "yes"))
+
+    def test_nginx_stack_sends_no_wordpress_probes(self):
+        with local_server({"/": (200, {"Server": "nginx"}, "Home")}) as server:
+            self.scan(server, "nginx")
+            self.assertEqual([path for path, _ in server.requests], ["/"])
+
+    def test_http2_is_only_checked_for_tls_nginx(self):
+        with local_server({"/": (200, {"Server": "nginx/1.30.6"}, "Home")}) as server, \
+                patch.object(scanner, "negotiated_http2", side_effect=AssertionError("plain HTTP")):
+            self.assertEqual(self.scan(server, "nginx")["http2"], "unknown")
+
+
 class NetworkTests(unittest.TestCase):
     def scan(self, server, **overrides):
         settings = options(ports=[server.server_port], **overrides)

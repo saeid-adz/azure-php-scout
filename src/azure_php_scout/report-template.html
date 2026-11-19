@@ -15,7 +15,7 @@ h1{font-size:clamp(28px,4vw,40px);letter-spacing:-.04em;line-height:1.12;margin:
 .status{font-size:12px;border:1px solid #4f7375;border-radius:999px;padding:5px 12px;white-space:nowrap}.status::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#64dfbb;margin-right:7px}
 .status.interrupted::before,.status.failed::before{background:#ffd18c}.status.running::before{background:#9cdaf8}
 .print{color:white;background:transparent;border:1px solid #678588;padding:9px 16px;border-radius:7px;font:inherit;cursor:pointer;white-space:nowrap}
-main{max-width:1488px;margin:auto;padding:28px 24px 40px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+main{max-width:1488px;margin:auto;padding:28px 24px 40px}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:16px}
 .stat{background:white;border:1px solid var(--line);border-radius:12px;padding:20px 22px}.stat-label{font-size:12px;color:var(--muted)}.stat strong{display:block;font-size:34px;line-height:1.3;letter-spacing:-.04em;margin:8px 0}.stat small{color:var(--muted);font-size:12px}.stat.accent{border-top:3px solid var(--teal);padding-top:18px}
 .progress{margin-top:15px;display:flex;gap:12px;align-items:center;font-size:12px;color:var(--muted)}progress{height:7px;max-width:220px;accent-color:var(--teal)}
 .results{background:white;border:1px solid var(--line);border-radius:12px;margin-top:26px;overflow:hidden}.section-heading{padding:22px 24px 14px}h2{margin:0;font-size:19px;letter-spacing:-.02em}.count{color:var(--muted);font-size:12px}
@@ -39,7 +39,7 @@ details{min-width:120px;max-width:500px}summary{cursor:pointer;white-space:nowra
 <header>
  <div class="topline"><div class="brand">AZURE<span> / </span>PHP SCOUT</div><span class="status $status">$status_label</span></div>
  <p class="eyebrow">Virtual machines · App Services · Static Web Apps</p>
- <div class="heading"><div><h1>PHP &amp; WordPress report</h1><p>See which endpoints expose technology signatures, then inspect the evidence behind each finding.</p></div><button class="print" id="print" type="button">Print / Save PDF</button></div>
+ <div class="heading"><div><h1>PHP, WordPress &amp; NGINX report</h1><p>See which endpoints expose technology signatures, then inspect the evidence behind each finding.</p></div><button class="print" id="print" type="button">Print / Save PDF</button></div>
 </header>
 <main>
  <section class="stats" aria-label="Scan summary">
@@ -47,8 +47,10 @@ details{min-width:120px;max-width:500px}summary{cursor:pointer;white-space:nowra
   <div class="stat"><span class="stat-label">$connection_label</span><strong>$connection_count</strong><small>$connection_detail</small></div>
   <div class="stat accent"><span class="stat-label">PHP signals</span><strong>$php_count</strong><small>$php_yes detected · $php_probable probable</small></div>
   <div class="stat accent"><span class="stat-label">WordPress signals</span><strong>$wp_count</strong><small>$wp_yes detected · $wp_probable probable</small></div>
+  <div class="stat accent"><span class="stat-label">NGINX signals</span><strong>$nginx_count</strong><small>$nginx_yes detected · $nginx_probable probable</small></div>
  </section>
  <p class="advisory-note"><strong>$potential_count $result_unit potentially affected by tracked PHP advisories.</strong> Rules reviewed $advisory_date. Version evidence requires package, backport, and deployment verification. This catalog tracks two CVEs and does not establish exploitability or complete vulnerability coverage.</p>
+ <p class="advisory-note"><strong>$nginx_potential $result_unit potentially affected by tracked NGINX HTTP/2 advisories.</strong> Rules reviewed $nginx_advisory_date. NGINX is identified from the Server header or default error page; HTTP/2 is confirmed by TLS ALPN negotiation. Version evidence requires package, backport, and deployment verification.</p>
  <div class="progress"><progress max="100" value="$progress" aria-label="Scan completion">$progress%</progress><span>$status_label · $total / $expected $result_unit</span></div>
  $coverage
  <section class="results" aria-labelledby="results-heading">
@@ -57,12 +59,12 @@ details{min-width:120px;max-width:500px}summary{cursor:pointer;white-space:nowra
    <label>Search<input id="search" type="search" placeholder="Customer, IP, hostname, version, evidence…" autocomplete="off"></label>
    <label>Customer<select id="customer"><option value="">All customers</option>$customer_options</select></label>
    <label>Resource type<select id="resource"><option value="">All resource types</option><option value="vm">Virtual machines</option><option value="appservice">App Services</option><option value="staticwebapp">Static Web Apps</option><option value="target">Manual targets</option></select></label>
-   <label>Technology<select id="technology"><option value="">All technologies</option><option value="any">PHP or WordPress signals</option><option value="wordpress">WordPress signals</option><option value="php">PHP signals</option><option value="unknown">No technology signals</option></select></label>
+   <label>Technology<select id="technology"><option value="">All technologies</option><option value="any">PHP, WordPress or NGINX signals</option><option value="wordpress">WordPress signals</option><option value="php">PHP signals</option><option value="nginx">NGINX signals</option><option value="unknown">No technology signals</option></select></label>
    <label>$connection_filter_label<select id="connection">$connection_options</select></label>
    <label>Sort by<select id="sort"><option value="findings">Findings first</option><option value="customer">Customer</option><option value="target">Target address</option></select></label>
   </div>
   <noscript><p>All results are shown below. Enable JavaScript to search, filter, and sort them.</p></noscript>
-  <div class="table-wrap"><table><thead><tr><th scope="col">Customer / asset</th><th scope="col">Endpoint</th><th scope="col">$connection_header</th><th scope="col">PHP</th><th scope="col">WordPress</th><th scope="col">Assessment</th><th scope="col">Evidence &amp; metadata</th></tr></thead>
+  <div class="table-wrap"><table><thead><tr><th scope="col">Customer / asset</th><th scope="col">Endpoint</th><th scope="col">$connection_header</th><th scope="col">PHP</th><th scope="col">WordPress</th><th scope="col">NGINX</th><th scope="col">Assessment</th><th scope="col">Evidence &amp; metadata</th></tr></thead>
    <tbody id="results">$rows</tbody>
   </table></div>
   <div class="empty" id="empty"$empty_hidden>No results match the current filters. If the scan is still running, refresh this file to see its latest results.</div>
@@ -88,12 +90,13 @@ details{min-width:120px;max-width:500px}summary{cursor:pointer;white-space:nowra
     let visible = 0;
     for (const row of rows) {
       const d = row.dataset;
-      const php = d.php !== 'unknown', wp = d.wp !== 'unknown';
+      const php = d.php !== 'unknown', wp = d.wp !== 'unknown', nginx = d.nginx !== 'unknown';
       const matchesTechnology = !technology.value ||
-        (technology.value === 'any' && (php || wp)) ||
+        (technology.value === 'any' && (php || wp || nginx)) ||
         (technology.value === 'php' && php) ||
         (technology.value === 'wordpress' && wp) ||
-        (technology.value === 'unknown' && !php && !wp);
+        (technology.value === 'nginx' && nginx) ||
+        (technology.value === 'unknown' && !php && !wp && !nginx);
       row.hidden = !((!query || searchable.get(row).includes(query)) &&
         (!customer.value || d.customer === customer.value) && matchesTechnology &&
         (!resource.value || d.resource === resource.value) &&

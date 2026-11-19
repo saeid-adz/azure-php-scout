@@ -49,6 +49,7 @@ class ScanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: Literal["azure", "targets", "inventory", "demo", "guest"] = "azure"
     name: str = Field(default="Azure discovery", min_length=1, max_length=100)
+    stack: Literal["php", "nginx", "both"] = "both"
     subscriptions: list[str] = Field(default_factory=list, max_length=1000)
     targets: list[str] = Field(default_factory=list, max_length=256)
     inventory_csv: str = Field(default="", max_length=1_500_000)
@@ -98,6 +99,10 @@ class ScanRequest(BaseModel):
 
     @model_validator(mode="after")
     def source(self):
+        if self.mode == "guest":
+            if self.stack == "nginx":
+                raise ValueError("VM guest inspection supports PHP only; use an endpoint scan for NGINX")
+            self.stack = "php"
         if self.mode == "guest" and sum((bool(self.vm_ids), bool(self.guest_subscription), self.guest_all_subscriptions, bool(self.guest_retry_scan))) != 1:
             raise ValueError("Choose all subscriptions, one subscription, specific VM IDs, or a previous guest scan to retry")
         if self.mode == "guest" and (self.guest_subscription or self.guest_all_subscriptions or self.guest_retry_scan) and self.subscriptions:
@@ -179,7 +184,7 @@ def create_app(data_dir=None, token=None):
     def status():
         return dict(version=__version__, azureCliAvailable=shutil.which("az") is not None,
                     advisoryReviewedAt=catalog()["reviewed_at"], advisoryScope=catalog()["scope"],
-                    advisoryIds=[item["id"] for item in catalog()["advisories"]])
+                    advisoryIds=[item["id"] for item in catalog()["advisories"] + catalog()["nginx"]["advisories"]])
 
     @app.get("/api/advisories", dependencies=auth)
     def advisories():
@@ -246,9 +251,10 @@ def create_app(data_dir=None, token=None):
         rows = app.state.jobs.rows(job_id)
         selected = [row for row in rows if (not q or q.casefold() in " ".join(str(value) for value in row.values()).casefold())
                     and (not resource_type or row.get("resourceType") == resource_type)
-                    and (not assessment or row.get("assessment") == assessment)]
+                    and (not assessment or assessment in (row.get("assessment"), row.get("nginxAssessment") if row.get("nginx") in ("yes", "probable") else None))]
         priority = {"critical": 0, "high": 1, "medium": 2, "info": 3}
-        selected.sort(key=lambda row: (priority.get(row.get("riskLevel"), 4), row.get("target", ""), str(row.get("port", ""))))
+        selected.sort(key=lambda row: (min(priority.get(row.get("riskLevel"), 4), priority.get(row.get("nginxRiskLevel"), 4)
+                                           if row.get("nginx") in ("yes", "probable") else 4), row.get("target", ""), str(row.get("port", ""))))
         return dict(total=len(selected), offset=offset, limit=limit, rows=selected[offset:offset + limit])
 
     @app.post("/api/scans/{job_id}/cancel", dependencies=auth)

@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const state = {token: sessionStorage.getItem('scout-token') || '', selected: '', offset: 0, limit: 50, rows: [], jobs: [], busy: false, timer: null, catalog: null, findingRequest: 0};
-const labels = {potentially_affected: 'Potentially affected', end_of_life: 'Upstream end of life', verify_version: 'Verify runtime version', configuration_only: 'Configuration only', no_catalog_match: 'Outside tracked ranges', undetermined: 'Undetermined'};
+const labels = {potentially_affected: 'Potentially affected', end_of_life: 'Upstream end of life', verify_version: 'Verify runtime version', verify_http2: 'Verify HTTP/2 exposure', configuration_only: 'Configuration only', no_catalog_match: 'Outside tracked ranges', undetermined: 'Undetermined'};
 const resourceLabels = {vm: 'Virtual machine', appservice: 'App Service', staticwebapp: 'Static Web App', target: 'Manual target'};
 const runningStates = new Set(['queued', 'running', 'cancelling']);
 function el(tag, className, text) { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = String(text); return node; }
@@ -65,7 +65,7 @@ async function loadSelected() {
   const subscriptionResults = guestScope.subscriptionResults || [];
   $('coverage-scope-label').textContent = guest ? 'Inspection method' : 'VM port scope';
   $('coverage-progress-label').textContent = guest ? 'VM progress' : 'TCP discovery';
-  $('stat-affected').textContent = summary.potentiallyAffected || 0; $('stat-eol').textContent = summary.endOfLife || 0; $('stat-verify').textContent = summary.verifyVersion || 0; $('stat-http').textContent = summary.responded || 0;
+  $('stat-affected').textContent = (summary.potentiallyAffected || 0) + (summary.nginxPotentiallyAffected || 0); $('stat-eol').textContent = summary.endOfLife || 0; $('stat-verify').textContent = (summary.verifyVersion || 0) + (summary.nginxVerify || 0); $('stat-http').textContent = summary.responded || 0;
   $('stat-http-label').textContent = guest ? 'VMs inspected' : 'HTTP endpoints';
   if (guest) $('stat-http').textContent = guestScope.checked || 0;
   $('stat-endpoints').textContent = guest ? (summary.endpoints || 0) + ' guest evidence records · ' + (discovering ? 'Discovering VMs' : requestedVms + ' VMs in scope') : (summary.endpoints || 0) + ' endpoints checked';
@@ -115,9 +115,16 @@ async function loadFindings() {
     const guest = row.evidenceSource === 'guest';
     const service = el('td'); service.append(el('span', 'service-name', row.vm || row.app || row.hostname || row.target), el('span', 'endpoint', guest ? row.guestPath || row.guestPackage || 'Azure VM Agent' : (row.hostname || row.target) + ':' + row.port), el('span', 'asset-type', guest ? 'Guest inventory · ' + (row.os || 'VM') : resourceLabels[row.resourceType] || 'Manual target'));
     const context = el('td'); context.append(el('span', 'customer-name', row.subscription || 'Unassigned'), el('span', 'resource-group', row.resourceGroup || '—'));
-    const runtime = el('td'); runtime.append(el('span', 'runtime-version', row.phpVersion ? 'PHP ' + row.phpVersion : row.php === 'unknown' ? 'PHP unknown' : 'PHP version hidden'), el('span', 'signal-label', row.wordpress !== 'unknown' && row.wordpress ? 'WordPress' + (row.wordpressVersion ? ' ' + row.wordpressVersion : ' signals') : row.reachable === 'yes' ? 'HTTP ' + row.httpStatus : row.tcpOpen === 'yes' ? 'Open TCP / no HTTP' : 'No HTTP response'));
+    const stack = row.stack || 'both', showPhp = stack !== 'nginx', showNginx = stack !== 'php' || row.nginx === 'yes' || row.nginx === 'probable';
+    const runtime = el('td');
+    if (showPhp) runtime.append(el('span', 'runtime-version', row.phpVersion ? 'PHP ' + row.phpVersion : row.php === 'unknown' ? 'PHP unknown' : 'PHP version hidden'));
+    if (showNginx) runtime.append(el('span', 'runtime-version', row.nginx === 'unknown' || !row.nginx ? 'NGINX not detected' : 'NGINX ' + (row.nginxVersion || 'version hidden') + (row.http2 === 'yes' ? ' · HTTP/2' : '')));
+    runtime.append(el('span', 'signal-label', showPhp && row.wordpress !== 'unknown' && row.wordpress ? 'WordPress' + (row.wordpressVersion ? ' ' + row.wordpressVersion : ' signals') : row.reachable === 'yes' ? 'HTTP ' + row.httpStatus : row.tcpOpen === 'yes' ? 'Open TCP / no HTTP' : 'No HTTP response'));
     if (guest) runtime.querySelector('.signal-label').textContent = (row.guestSource || 'Guest check') + ' · ' + row.guestStatus;
-    const assessment = el('td'); assessment.append(el('span', 'risk-badge ' + row.riskLevel, labels[row.assessment] || 'Undetermined')); if (row.cves) assessment.append(el('span', 'cve-label', row.cves));
+    const assessment = el('td');
+    if (showPhp) { assessment.append(el('span', 'risk-badge ' + row.riskLevel, (showNginx ? 'PHP · ' : '') + (labels[row.assessment] || 'Undetermined'))); if (row.cves) assessment.append(el('span', 'cve-label', row.cves)); }
+    if (showNginx && (row.nginx === 'yes' || row.nginx === 'probable')) { assessment.append(el('span', 'risk-badge ' + row.nginxRiskLevel, (showPhp ? 'NGINX · ' : '') + (labels[row.nginxAssessment] || 'Undetermined'))); if (row.nginxCves) assessment.append(el('span', 'cve-label', row.nginxCves)); }
+    else if (!showPhp) assessment.append(el('span', 'risk-badge info', 'No NGINX signal'));
     const action = el('td'); const button = el('button', 'inspect', '↗'); button.type = 'button'; button.setAttribute('aria-label', 'Inspect ' + (row.vm || row.app || row.target)); button.addEventListener('click', () => showDetails(row)); action.append(button);
     tr.append(service, context, runtime, assessment, action); body.append(tr);
   });
@@ -134,16 +141,22 @@ function showDetails(row) {
   $('detail-title').textContent = row.vm || row.app || row.hostname || row.target;
   const content = $('detail-content'); content.replaceChildren(el('span', 'risk-badge ' + row.riskLevel, labels[row.assessment] || 'Undetermined'));
   const grid = el('dl', 'detail-grid');
-  for (const [label, value] of [['Resource type', resourceLabels[row.resourceType]], ['OS', row.os], ['Subscription', row.subscription], ['Resource group', row.resourceGroup], ['Endpoint', row.finalUrl || row.url], ['PHP version evidence', row.phpVersions || row.phpVersion], ['WordPress', row.wordpressVersion || row.wordpress], ['Configured PHP', row.configuredPhpVersion], ['Server', row.server], ['HTTP status', row.httpStatus], ['Guest status', row.guestStatus], ['Guest source', row.guestSource], ['Installed binary', row.guestPath], ['Package', row.guestPackage], ['Vendor package version', row.guestPackageVersion], ['PHP process observed', row.guestProcessObserved], ['Script SHA-256', row.guestScriptSha256], ['PHP support', row.phpSupport], ['Rules reviewed', row.advisoryReviewedAt]]) { if (value) grid.append(el('dt', '', label), el('dd', '', value)); }
+  for (const [label, value] of [['Resource type', resourceLabels[row.resourceType]], ['OS', row.os], ['Subscription', row.subscription], ['Resource group', row.resourceGroup], ['Endpoint', row.finalUrl || row.url], ['PHP version evidence', row.phpVersions || row.phpVersion], ['WordPress', row.wordpressVersion || row.wordpress], ['Configured PHP', row.configuredPhpVersion], ['Server', row.server], ['HTTP status', row.httpStatus], ['Guest status', row.guestStatus], ['Guest source', row.guestSource], ['Installed binary', row.guestPath], ['Package', row.guestPackage], ['Vendor package version', row.guestPackageVersion], ['PHP process observed', row.guestProcessObserved], ['Script SHA-256', row.guestScriptSha256], ['PHP support', row.phpSupport], ['NGINX version evidence', row.nginxVersion], ['HTTP/2 negotiated', row.http2], ['Rules reviewed', row.advisoryReviewedAt]]) { if (value) grid.append(el('dt', '', label), el('dd', '', value)); }
   content.append(grid);
-  section(content, 'Version assessment', row.assessmentBasis); section(content, 'Recommended action', row.remediation); section(content, 'Detection evidence', row.evidence || 'No explicit technology signature was collected.'); if (row.note) section(content, 'Connection notes', row.note);
-  if (row.cves) { const group = section(content, 'Official advisories', 'Review the vendor guidance and verify applicability to the deployed runtime.'); for (const item of state.catalog?.advisories || []) if (row.cves.includes(item.id)) group.append(safeLink(item.url, item.id + ' ↗'), el('br')); }
+  if (row.stack !== 'nginx') { section(content, 'Version assessment', row.assessmentBasis); section(content, 'Recommended action', row.remediation); }
+  if (row.nginx === 'yes' || row.nginx === 'probable') { section(content, 'NGINX assessment', row.nginxBasis); section(content, 'NGINX recommended action', row.nginxRemediation); } section(content, 'Detection evidence', row.evidence || 'No explicit technology signature was collected.'); if (row.note) section(content, 'Connection notes', row.note);
+  if (row.cves || row.nginxCves) { const group = section(content, 'Official advisories', 'Review the vendor guidance and verify applicability to the deployed runtime.'); for (const item of [...(state.catalog?.advisories || []), ...(state.catalog?.nginx?.advisories || [])]) if ((row.cves + ' ' + row.nginxCves).includes(item.id)) group.append(safeLink(item.url, item.id + ' ↗'), el('br')); }
   if (row.resourceId?.startsWith('/subscriptions/')) { const group = section(content, 'Azure resource', row.resourceId); group.append(safeLink('https://portal.azure.com/#resource' + row.resourceId, 'Open resource in Azure Portal ↗')); }
   $('detail-dialog').showModal();
 }
 function showAdvisories() {
   const content = $('advisory-content'); content.replaceChildren(el('p', 'muted', state.catalog?.scope || 'Two reviewed PHP core advisories.'));
   for (const item of state.catalog?.advisories || []) { const card = el('article', 'advisory-card'); card.append(el('span', 'risk-badge critical', item.id + ' · Critical · CVSS ' + item.cvss), el('h3', '', item.title), el('p', '', 'Upstream fixed releases by branch. Vendor backports require separate verification.')); const versions = el('div', 'patch-grid'); for (const fixed of Object.values(item.fixed)) versions.append(el('span', '', fixed)); card.append(versions, el('p', '', 'Published ' + item.published + ' · Catalog reviewed ' + state.catalog.reviewed_at), safeLink(item.url, 'Read official advisory ↗')); content.append(card); }
+  const nginx = state.catalog?.nginx;
+  if (nginx) {
+    content.append(el('h3', '', 'NGINX HTTP/2'), el('p', 'muted', nginx.scope));
+    for (const item of nginx.advisories) { const card = el('article', 'advisory-card'); card.append(el('span', 'risk-badge critical', item.id + ' · Critical · CVSS ' + item.cvss), el('h3', '', item.title), el('p', '', item.condition)); const versions = el('div', 'patch-grid'); for (const fixed of Object.values(item.fixed)) versions.append(el('span', '', fixed)); card.append(versions, el('p', '', 'Affected: ' + item.ranges.map(range => range.join('–')).join(', ') + ' · Catalog reviewed ' + nginx.reviewed_at), safeLink(item.url, 'Read F5 advisory ↗')); content.append(card); }
+  }
   section(content, 'How findings are assessed', 'A PHP header version can match an upstream advisory range. This does not prove exploitability, establish a vendor backport status, or identify every vulnerability. Unknown runtime versions remain verification tasks. Configuration values are reported separately.');
   $('advisory-dialog').showModal();
 }
@@ -152,7 +165,7 @@ function updateSource() {
   const mode = $('source-mode').value, guest = mode === 'guest';
   const scope = $('guest-scope').value, allVms = scope !== 'vms', allSubscriptions = scope === 'all_subscriptions';
   $('azure-fields').hidden = mode !== 'azure' && !(guest && !allVms); $('target-fields').hidden = mode !== 'targets'; $('inventory-fields').hidden = mode !== 'inventory';
-  $('guest-fields').hidden = !guest; $('guest-vm-ids').required = guest && !allVms;
+  $('guest-fields').hidden = !guest; $('stack').disabled = guest; $('stack-hint').hidden = !guest; $('guest-vm-ids').required = guest && !allVms;
   $('guest-subscription-fields').hidden = scope !== 'subscription'; $('guest-selected-fields').hidden = allVms;
   $('guest-all-subscriptions-fields').hidden = !allSubscriptions;
   $('guest-subscription').required = guest && scope === 'subscription';
@@ -236,7 +249,7 @@ $('scan-form').addEventListener('submit', async event => {
   try {
     const mode = form.get('mode'), profile = form.get('profile');
     const allVms = mode === 'guest' && form.get('guest_scope') !== 'vms';
-    const config = {mode, name:form.get('name'), vm_ports:mode === 'guest' ? 'web' : profile === 'custom' ? form.get('custom_ports').trim() : profile, subscriptions:mode === 'azure' || (mode === 'guest' && !allVms) ? form.get('subscriptions').split(/[\s,;]+/).filter(Boolean) : [], targets:mode === 'targets' ? form.get('targets').split(/[\s,;]+/).filter(Boolean) : []};
+    const config = {mode, stack:mode === 'guest' ? 'php' : form.get('stack'), name:form.get('name'), vm_ports:mode === 'guest' ? 'web' : profile === 'custom' ? form.get('custom_ports').trim() : profile, subscriptions:mode === 'azure' || (mode === 'guest' && !allVms) ? form.get('subscriptions').split(/[\s,;]+/).filter(Boolean) : [], targets:mode === 'targets' ? form.get('targets').split(/[\s,;]+/).filter(Boolean) : []};
     if (mode === 'guest') {
       if (form.get('guest_scope') === 'all_subscriptions') config.guest_all_subscriptions = true;
       else if (allVms) config.guest_subscription = form.get('guest_subscription').trim();

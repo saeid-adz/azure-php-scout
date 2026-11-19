@@ -108,6 +108,9 @@ azure-php-scout scan --azure --subscription SUBSCRIPTION-ID --running-only
 # A custom VM discovery range.
 azure-php-scout scan --azure --vm-ports 80,443,3000-3010,8000-9000
 
+# Choose the technology to check: php, nginx, or both (default).
+azure-php-scout scan --azure --stack nginx
+
 # A named website pinned to an IP, with explicit port checks.
 azure-php-scout scan --ip 203.0.113.10 --host www.example.com --ports 80,443,8080,8443
 
@@ -273,6 +276,18 @@ Sources: [PHP security announcement](https://www.php.net/archive/2026.php#2026-1
 [OOM corruption advisory](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w),
 [stale global state advisory](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp),
 [PHP support lifecycle](https://www.php.net/supported-versions.php).
+
+## NGINX HTTP/2 checks
+
+`--stack` (or the dashboard's **Technology to check** menu, or `"stack"` in the API) selects
+`php`, `nginx`, or `both` (default). NGINX is identified from the `Server` header or the
+default error page; OpenResty is reported as a probable NGINX without a version. For TLS
+endpoints one extra ALPN handshake records whether HTTP/2 is negotiated; no HTTP/2 frames
+or exploit traffic are sent. Findings compare the version with CVE-2026-123633 and
+CVE-2026-123007 (see [docs/ADVISORIES.md](docs/ADVISORIES.md)). Hidden versions
+(`server_tokens off`), distribution backports, plain-HTTP/h2c listeners and HTTP/2 on other
+ports cannot be confirmed from the outside and are reported as verification tasks. VM guest
+inspection remains PHP-only.
 
 ## Coverage and limits
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from string import Template
 import tempfile
 from urllib.parse import urlsplit
-from .advisories import assess, enrich, catalog
+from .advisories import assess_nginx, assess, enrich, catalog
 from .snapshots import replace_snapshot
 
 CONTROL_ESCAPES = {code: "\\x{:02x}".format(code) for code in range(32) if code not in (9, 10, 13)}
@@ -66,14 +66,16 @@ def result_row(row):
     resource_type = row.get("resourceType") or ("vm" if row.get("vm") else "appservice" if row.get("app") else "target")
     php = row.get("php") if row.get("php") in ("yes", "probable") else "unknown"
     wp = row.get("wordpress") if row.get("wordpress") in ("yes", "probable") else "unknown"
+    nginx = row.get("nginx") if row.get("nginx") in ("yes", "probable") else "unknown"
+    nginx_assessment = assess_nginx(row)
     reachable = "yes" if row.get("reachable") == "yes" else "no"
-    rank = 0 if "yes" in (php, wp) else 1 if "probable" in (php, wp) else 2 if reachable == "yes" else 3
+    rank = 0 if "yes" in (php, wp, nginx) else 1 if "probable" in (php, wp, nginx) else 2 if reachable == "yes" else 3
     details = []
     for label, key in (("Page title", "title"), ("Server", "server"), ("Resource group", "resourceGroup"),
                        ("OS", "os"), ("Inventory state", "powerState"), ("App state", "state"),
                        ("Configured runtime", "configuredRuntime"), ("Configured PHP", "configuredPhpVersion"),
                        ("Inventory note", "inventoryNote"), ("Requests", "requests"), ("Resource ID", "resourceId"),
-                       ("Public network access", "publicNetworkAccess"), ("TCP open", "tcpOpen"), ("Protocol", "service"), ("VM resource ID", "vmId")):
+                       ("Public network access", "publicNetworkAccess"), ("TCP open", "tcpOpen"), ("Protocol", "service"), ("HTTP/2 negotiated", "http2"), ("VM resource ID", "vmId")):
         if row.get(key) not in (None, ""):
             details.append('<dt>{}</dt><dd>{}</dd>'.format(label, text(row[key])))
     for label, key in (("Evidence source", "evidenceSource"), ("Guest status", "guestStatus"),
@@ -95,15 +97,20 @@ def result_row(row):
         http = '<span class="http-code">Guest inspection</span><small>{}</small>'.format(text(row.get("guestStatus")))
     endpoint = row.get("finalUrl") or row.get("url")
     label = row.get("hostname") or row.get("target") or "—"
-    return '''<tr class="result" data-customer="{customer}" data-php="{php}" data-wp="{wp}"
+    return '''<tr class="result" data-customer="{customer}" data-php="{php}" data-wp="{wp}" data-nginx="{nginx}"
  data-reachable="{reachable}" data-rank="{rank}" data-target="{target}" data-port="{port}" data-resource="{resource_type}" data-guest-status="{guest_status}">
  <td><strong>{customer}</strong><small>{asset}</small><small>{resource_label}</small></td>
  <td class="endpoint">{link}<small>{endpoint_detail}</small></td>
- <td>{http}</td><td>{php_badge}</td><td>{wp_badge}</td><td>{risk}</td>
+ <td>{http}</td><td>{php_badge}</td><td>{wp_badge}</td><td>{nginx_badge}</td><td>{risk}{nginx_risk}</td>
  <td><details><summary>View details</summary><div class="detail-content"><dl>{details}</dl>
  <h4>Detection evidence</h4><p>{evidence}</p><h4>Version assessment</h4><p>{basis}</p>
- <h4>Recommended action</h4><p>{remediation}</p>{advisories}{note}</div></details></td></tr>'''.format(
-        customer=text(customer), asset=text(asset), php=php, wp=wp, reachable=reachable,
+ <h4>Recommended action</h4><p>{remediation}</p>{advisories}{nginx_section}{note}</div></details></td></tr>'''.format(
+        customer=text(customer), asset=text(asset), php=php, wp=wp, nginx=nginx, nginx_badge=badge(nginx, row.get("nginxVersion")),
+        nginx_risk=('<span class="risk {}">nginx {}</span>'.format(text(nginx_assessment["nginxRiskLevel"]), text(nginx_assessment["nginxAssessment"].replace("_", " ")))
+                    if nginx != "unknown" else ""),
+        nginx_section=('<h4>NGINX assessment</h4><p>{}</p><p>{}</p>{}'.format(
+            text(nginx_assessment["nginxBasis"]), text(nginx_assessment["nginxRemediation"]),
+            "".join('<p>{}</p>'.format(safe_link(item["url"], item["id"])) for item in nginx_assessment["matches"])) if nginx != "unknown" else ""), reachable=reachable,
         rank=rank, target=text(row.get("target")), port=text(row.get("port")), guest_status=text(row.get("guestStatus", "")),
         link=safe_link(endpoint, label), http=http, php_badge=badge(php, row.get("phpVersion")),
         endpoint_detail=text((row.get("guestPath") or row.get("guestPackage") or "Azure VM Agent; no HTTP check") if guest else
@@ -187,6 +194,7 @@ def write_html_report(path, rows, *, status="complete", expected=None, scope=Non
     responded = sum(row.get("reachable") == "yes" for row in unique.values())
     php = Counter(row.get("php") for row in unique.values())
     wp = Counter(row.get("wordpress") for row in unique.values())
+    nginx = Counter(row.get("nginx") for row in unique.values())
     customers = sorted({row.get("subscription") or "Unassigned" for row in rows}, key=str.casefold)
     labels = {"complete": "Scan complete", "imported": "Imported CSV results",
               "running": "Scan in progress", "interrupted": "Scan interrupted", "failed": "Scan incomplete"}
@@ -198,12 +206,15 @@ def write_html_report(path, rows, *, status="complete", expected=None, scope=Non
         total=total, expected=expected, responded=responded, unavailable=total - responded,
         php_count=php["yes"] + php["probable"], php_yes=php["yes"], php_probable=php["probable"],
         wp_count=wp["yes"] + wp["probable"], wp_yes=wp["yes"], wp_probable=wp["probable"],
+        nginx_count=nginx["yes"] + nginx["probable"], nginx_yes=nginx["yes"], nginx_probable=nginx["probable"],
+        nginx_potential=sum(row.get("nginxAssessment") == "potentially_affected" for row in unique.values()),
+        nginx_advisory_date=text(catalog()["nginx"]["reviewed_at"]),
         row_count=len(rows),
         progress=round(100 * total / expected) if expected else 0,
         customer_options="".join('<option value="{0}">{0}</option>'.format(text(customer)) for customer in customers),
         rows="\n".join(result_row(row) for row in sorted(rows, key=lambda row: (
-            0 if row.get("wordpress") == "yes" or row.get("php") == "yes" else
-            1 if row.get("wordpress") == "probable" or row.get("php") == "probable" else
+            0 if "yes" in (row.get("wordpress"), row.get("php"), row.get("nginx")) else
+            1 if "probable" in (row.get("wordpress"), row.get("php"), row.get("nginx")) else
             2 if row.get("reachable") == "yes" else 3,
             str(row.get("subscription", "")).casefold(), endpoint_key(row)))),
         empty_hidden=" hidden" if rows else "",

@@ -28,6 +28,7 @@ Example scan request:
 {
   "mode": "azure",
   "name": "Web exposure review",
+  "stack": "both",
   "subscriptions": [],
   "vm_ports": "web",
   "workers": 10,

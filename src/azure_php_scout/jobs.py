@@ -29,7 +29,8 @@ def now():
 def summarize(rows):
     rows = list(rows)
     unique = {endpoint_key(row): row for row in rows}.values()
-    result = dict(endpoints=0, responded=0, php=0, wordpress=0, potentiallyAffected=0, endOfLife=0, verifyVersion=0)
+    result = dict(endpoints=0, responded=0, php=0, wordpress=0, potentiallyAffected=0, endOfLife=0, verifyVersion=0,
+                  nginx=0, nginxPotentiallyAffected=0, nginxVerify=0)
     for row in unique:
         result["endpoints"] += 1
         result["responded"] += row.get("reachable") == "yes"
@@ -38,6 +39,9 @@ def summarize(rows):
         result["potentiallyAffected"] += row.get("assessment") == "potentially_affected"
         result["endOfLife"] += row.get("assessment") == "end_of_life"
         result["verifyVersion"] += row.get("assessment") in ("verify_version", "configuration_only")
+        result["nginx"] += row.get("nginx") in ("yes", "probable")
+        result["nginxPotentiallyAffected"] += row.get("nginxAssessment") == "potentially_affected"
+        result["nginxVerify"] += row.get("nginxAssessment") in ("verify_version", "verify_http2")
     result["guestVms"] = len({row.get("resourceId") for row in rows if row.get("evidenceSource") == "guest"})
     result["guestChecked"] = len({row.get("resourceId") for row in rows if row.get("guestStatus") in ("checked", "incomplete")})
     result["guestRetryable"] = len(retry_candidates(rows))
@@ -183,7 +187,7 @@ class JobManager:
                 except ValueError:
                     flag = "--hostname"
                 args.extend([flag, target])
-        args.extend(["--vm-ports", config["vm_ports"], "--timeout", str(config["timeout"]),
+        args.extend(["--stack", config.get("stack", "both"), "--vm-ports", config["vm_ports"], "--timeout", str(config["timeout"]),
                      "--workers", str(config["workers"]), "--port-workers", str(config["port_workers"]),
                      "--port-rate", str(config["port_rate"]), "--port-timeout", str(config["port_timeout"])])
         if config.get("running_only"):
@@ -203,9 +207,9 @@ class JobManager:
             writer = csv.DictWriter(output, fieldnames=FIELDS)
             writer.writeheader()
             writer.writerows(rows)
-        scope = dict(source="Synthetic community demo — no network requests", resources=dict(vm=3, appservice=2, staticwebapp=1),
-                     subscriptions=1, vmPortScope="Demo data", vmAddresses=3, appPorts=[80, 443], errors=[], skipped=[],
-                     scanStatus="complete", httpChecked=len(rows), scheduled=len(rows), tcp={})
+        scope = dict(source="Synthetic community demo — no network requests", resources=dict(vm=5, appservice=2, staticwebapp=1),
+                     subscriptions=1, vmPortScope="Demo data", vmAddresses=5, appPorts=[80, 443], errors=[], skipped=[],
+                     scanStatus="complete", stack="both", httpChecked=len(rows), scheduled=len(rows), tcp={})
         (folder / "results.coverage.json").write_text(json.dumps(scope, indent=2))
         write_html_report(folder / "results.html", rows, scope=scope)
 

@@ -35,3 +35,21 @@ To add or revise a rule, submit a PR with:
 The service never sends an exploit to confirm a CVE. Use the official
 [PHP announcement](https://www.php.net/archive/2026.php#2026-10-21-5) and the advisory
 links for operational remediation and configuration guidance.
+
+## NGINX HTTP/2 advisories
+
+The `nginx` section of the catalog (reviewed 2026-11-19) covers two critical (CVSS 4.0
+9.2) flaws in client-facing HTTP/2 handling, taken from the
+[CyberSecurityNews summary](https://cybersecuritynews.com/nginx-http-2-vulnerabilities/).
+The F5 advisories (K000163928, K000164058) were not independently retrieved; confirm
+ranges there before relying on them.
+
+| CVE | Affected NGINX Open Source | Fixed |
+| --- | --- | --- |
+| CVE-2026-123633 (use-after-free) | 1.19.7–1.30.6, 1.31.0–1.31.8 | 1.30.7, 1.31.9 |
+| CVE-2026-123007 | 1.9.5–1.30.6, 1.31.0–1.31.8 | 1.30.7, 1.31.9 |
+
+A version in range with HTTP/2 negotiated is **potentially affected**; in range without
+confirmed HTTP/2 is **verify HTTP/2 exposure**; no version is **verify version**. NGINX Plus
+and R-series releases are not assessed because their version is not exposed in HTTP headers.
+Restart (not reload) after upgrading.
