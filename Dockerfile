@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.15-slim
 
 ARG AZURE_CLI_VERSION=2.86.0
 ENV PYTHONUNBUFFERED=1 \
